@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { setOutputFormat } from './output.js';
 import { outputError } from './output.js';
+import { setGlobalBaseUrl } from './config.js';
 import { EXIT_CODES } from './types.js';
 import type { OutputFormat } from './types.js';
 
@@ -17,10 +18,14 @@ program
   .description('CLI for the Devic AI Platform API')
   .version('0.2.0')
   .option('-o, --output <format>', 'Output format: json or human')
+  .option('--base-url <url>', 'API base URL (overrides config and env)')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     if (opts.output) {
       setOutputFormat(opts.output as OutputFormat);
+    }
+    if (opts.baseUrl) {
+      setGlobalBaseUrl(opts.baseUrl as string);
     }
   });
 
