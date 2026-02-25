@@ -8,15 +8,29 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "bin",
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
     "start": "./bin/devic.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devicai/devic-cli.git"
+  },
+  "homepage": "https://github.com/devicai/devic-cli",
+  "bugs": {
+    "url": "https://github.com/devicai/devic-cli/issues"
   },
   "engines": {
     "node": ">=20.0.0"
   },
-  "keywords": ["devic", "ai", "cli", "agents", "assistants"],
+  "keywords": ["devic", "ai", "cli", "agents", "assistants", "llm", "api"],
   "license": "MIT",
   "dependencies": {
     "commander": "^13.1.0"
