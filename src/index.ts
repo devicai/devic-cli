@@ -16,7 +16,7 @@ const program = new Command();
 program
   .name('devic')
   .description('CLI for the Devic AI Platform API')
-  .version('0.2.0')
+  .version('0.2.1')
   .option('-o, --output <format>', 'Output format: json or human')
   .option('--base-url <url>', 'API base URL (overrides config and env)')
   .hook('preAction', (thisCommand) => {
