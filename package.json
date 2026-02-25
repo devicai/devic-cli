@@ -1,0 +1,28 @@
+{
+  "name": "@devicai/cli",
+  "version": "0.1.0",
+  "description": "CLI for the Devic AI Platform API",
+  "type": "module",
+  "bin": {
+    "devic": "./bin/devic.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "./bin/devic.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": ["devic", "ai", "cli", "agents", "assistants"],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.0"
+  }
+}
