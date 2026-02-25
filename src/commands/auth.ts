@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { loadConfig, saveConfig, deleteConfig } from '../config.js';
 import { DevicApiClient } from '../client.js';
 import { withAction } from '../helpers.js';
-import { outputHuman, getOutputFormat, outputJson } from '../output.js';
+import { md, getOutputFormat } from '../output.js';
 
 export function registerAuthCommands(program: Command): void {
   const auth = program.command('auth').description('Manage authentication');
@@ -22,13 +22,8 @@ export function registerAuthCommands(program: Command): void {
         await client.getAssistants();
 
         saveConfig({ apiKey: opts.apiKey, baseUrl: opts.baseUrl });
-
-        if (getOutputFormat() === 'human') {
-          outputHuman('Authenticated successfully.');
-          return undefined;
-        }
         return { status: 'authenticated', baseUrl };
-      }),
+      }, () => md.success('Authenticated successfully. Credentials saved.')),
     );
 
   auth
@@ -37,16 +32,30 @@ export function registerAuthCommands(program: Command): void {
     .action(
       withAction(async () => {
         const config = loadConfig();
-        const status = {
+        return {
           authenticated: !!config.apiKey,
           baseUrl: config.baseUrl ?? 'https://api.devic.ai',
           apiKey: config.apiKey ? `${config.apiKey.slice(0, 10)}...` : undefined,
         };
-        return status;
       }, (d) => {
         const s = d as { authenticated: boolean; baseUrl: string; apiKey?: string };
-        if (!s.authenticated) return 'Not authenticated. Run `devic auth login --api-key <key>`.';
-        return `Authenticated\n  API Key: ${s.apiKey}\n  Base URL: ${s.baseUrl}`;
+        if (!s.authenticated) {
+          return [
+            md.h(2, 'Authentication Status'),
+            '',
+            `${md.status('error')} **Not authenticated**`,
+            '',
+            `Run ${md.code('devic auth login --api-key <key>')} or set ${md.code('DEVIC_API_KEY')} env var.`,
+          ].join('\n');
+        }
+        return [
+          md.h(2, 'Authentication Status'),
+          '',
+          `${md.status('active')} **Authenticated**`,
+          '',
+          `**API Key:** ${md.code(s.apiKey!)}`,
+          `**Base URL:** ${s.baseUrl}`,
+        ].join('\n');
       }),
     );
 
@@ -56,11 +65,7 @@ export function registerAuthCommands(program: Command): void {
     .action(
       withAction(async () => {
         deleteConfig();
-        if (getOutputFormat() === 'human') {
-          outputHuman('Logged out.');
-          return undefined;
-        }
         return { status: 'logged_out' };
-      }),
+      }, () => md.success('Logged out. Credentials removed.')),
     );
 }

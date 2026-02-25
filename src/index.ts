@@ -15,7 +15,7 @@ const program = new Command();
 program
   .name('devic')
   .description('CLI for the Devic AI Platform API')
-  .version('0.1.0')
+  .version('0.2.0')
   .option('-o, --output <format>', 'Output format: json or human')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
