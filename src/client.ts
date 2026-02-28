@@ -35,6 +35,7 @@ export class DevicApiClient {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${this.config.apiKey}`,
+      'devic-api-source': 'cli',
       ...options.headers,
     };
 
