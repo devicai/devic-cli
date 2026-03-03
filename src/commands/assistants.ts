@@ -4,6 +4,22 @@ import { pollChat } from '../polling.js';
 import { md } from '../output.js';
 import type { RealtimeChatHistory, ChatHistory, AssistantSpecialization } from '../types.js';
 
+function formatAssistant(a: AssistantSpecialization): string {
+  const lines = [
+    md.h(2, `Assistant: ${a.name}`),
+    '',
+    `**Identifier:** ${md.code(a.identifier)}`,
+  ];
+  if (a._id) lines.push(`**ID:** ${md.code(a._id)}`);
+  if (a.description) lines.push(`**Description:** ${a.description}`);
+  if (a.state) lines.push(`**State:** ${md.status(a.state)} ${a.state}`);
+  if (a.model) lines.push(`**Model:** ${a.model}`);
+  if (a.provider) lines.push(`**Provider:** ${a.provider}`);
+  if (a.isCustom != null) lines.push(`**Custom:** ${a.isCustom ? 'Yes' : 'No'}`);
+  if (a.creationTimestampMs) lines.push(`**Created:** ${new Date(a.creationTimestampMs).toLocaleString()}`);
+  return lines.join('\n');
+}
+
 export function registerAssistantCommands(program: Command): void {
   const assistants = program.command('assistants').description('Manage assistants and chats');
 
@@ -71,6 +87,72 @@ export function registerAssistantCommands(program: Command): void {
           }
         }
         return lines.join('\n');
+      }),
+    );
+
+  // assistants create
+  assistants
+    .command('create')
+    .description('Create a new assistant')
+    .option('--name <name>', 'Assistant name')
+    .option('--description <desc>', 'Assistant description')
+    .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)')
+    .action(
+      withAction(async (opts: unknown) => {
+        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const client = createClient();
+        let data: Record<string, unknown>;
+        if (o.fromJson) {
+          data = await readJsonInput(o.fromJson);
+        } else {
+          data = {};
+          if (o.name) data.name = o.name;
+          if (o.description) data.description = o.description;
+        }
+        return client.createAssistant(data);
+      }, (d) => {
+        const a = d as AssistantSpecialization;
+        return [md.success(`Assistant created: ${md.b(a.name)}`), '', formatAssistant(a)].join('\n');
+      }),
+    );
+
+  // assistants update <identifier>
+  assistants
+    .command('update <identifier>')
+    .description('Update an assistant')
+    .option('--name <name>', 'Assistant name')
+    .option('--description <desc>', 'Assistant description')
+    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
+    .action(
+      withAction(async (identifier: unknown, opts: unknown) => {
+        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const client = createClient();
+        let data: Record<string, unknown>;
+        if (o.fromJson) {
+          data = await readJsonInput(o.fromJson);
+        } else {
+          data = {};
+          if (o.name) data.name = o.name;
+          if (o.description) data.description = o.description;
+        }
+        return client.updateAssistant(identifier as string, data);
+      }, (d) => {
+        const a = d as AssistantSpecialization;
+        return [md.success(`Assistant updated: ${md.b(a.name)}`), '', formatAssistant(a)].join('\n');
+      }),
+    );
+
+  // assistants delete <identifier>
+  assistants
+    .command('delete <identifier>')
+    .description('Delete an assistant')
+    .action(
+      withAction(async (identifier: unknown) => {
+        const client = createClient();
+        return client.deleteAssistant(identifier as string);
+      }, (d) => {
+        const r = d as any;
+        return md.success(r.message || `Assistant ${md.code(r.deletedId || '')} deleted.`);
       }),
     );
 

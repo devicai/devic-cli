@@ -93,6 +93,7 @@ export interface ChatHistory {
 }
 
 export interface AssistantSpecialization {
+  _id?: string;
   identifier: string;
   name: string;
   description: string;

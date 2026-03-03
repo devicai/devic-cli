@@ -71,6 +71,18 @@ export class DevicApiClient {
     return this.request<AssistantSpecialization>(`/api/v1/assistants/${identifier}`);
   }
 
+  async createAssistant(data: Record<string, unknown>): Promise<AssistantSpecialization> {
+    return this.request(`/api/v1/assistants`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateAssistant(identifier: string, data: Record<string, unknown>): Promise<AssistantSpecialization> {
+    return this.request(`/api/v1/assistants/${identifier}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  async deleteAssistant(identifier: string): Promise<unknown> {
+    return this.request(`/api/v1/assistants/${identifier}`, { method: 'DELETE' });
+  }
+
   async sendMessage(assistantId: string, dto: ProcessMessageDto, signal?: AbortSignal): Promise<ChatMessage[]> {
     const qs = dto.skipSummarization ? '?skipSummarization=true' : '';
     return this.request<ChatMessage[]>(`/api/v1/assistants/${assistantId}/messages${qs}`, {
