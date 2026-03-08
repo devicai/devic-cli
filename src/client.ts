@@ -194,7 +194,7 @@ export class DevicApiClient {
 
   async listThreads(
     agentId: string,
-    opts?: { offset?: number; limit?: number; state?: string; startDate?: string; endDate?: string; dateOrder?: string; tags?: string },
+    opts?: { offset?: number; limit?: number; state?: string; startDate?: string; endDate?: string; dateOrder?: string; tags?: string; omitContent?: boolean },
   ): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
@@ -204,6 +204,7 @@ export class DevicApiClient {
     if (opts?.endDate) params.set('endDate', opts.endDate);
     if (opts?.dateOrder) params.set('dateOrder', opts.dateOrder);
     if (opts?.tags) params.set('tags', opts.tags);
+    if (opts?.omitContent) params.set('omitContent', 'true');
     const q = params.toString();
     return this.request(`/api/v1/agents/${agentId}/threads${q ? `?${q}` : ''}`);
   }
