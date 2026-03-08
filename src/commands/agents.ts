@@ -264,24 +264,11 @@ export function registerAgentCommands(program: Command): void {
       const lines = [
         md.h(2, 'Threads'),
         '',
-        md.table(items.map((t: any) => {
-          const tasks = t.tasks as Array<{ title?: string; description?: string; completed: boolean }> | undefined;
-          let tasksSummary = '-';
-          if (tasks && tasks.length > 0) {
-            const done = tasks.filter((tk: any) => tk.completed).length;
-            const names = tasks
-              .map((tk: any) => tk.title || tk.description || '(untitled)')
-              .slice(0, 3)
-              .join(', ');
-            tasksSummary = `${done}/${tasks.length}: ${names}`;
-          }
-          return {
+        md.table(items.map((t: any) => ({
             id: t.threadId ?? t._id,
             state: `${md.status(t.state)} ${t.state}`,
-            tasks: tasksSummary,
             created: t.createdAt ?? (t.creationTimestampMs ? new Date(t.creationTimestampMs).toLocaleString() : '-'),
-          };
-        }), { columns: ['id', 'state', 'tasks', 'created'] }),
+          })), { columns: ['id', 'state', 'created'] }),
       ];
       if (data.total != null) lines.push(md.pagination(data));
       return lines.join('\n');
