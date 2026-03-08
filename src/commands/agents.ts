@@ -229,22 +229,34 @@ export function registerAgentCommands(program: Command): void {
       .option('--start-date <date>', 'Start date filter')
       .option('--end-date <date>', 'End date filter')
       .option('--date-order <order>', 'Sort by date (asc|desc)')
-      .option('--tags <tags>', 'Comma-separated tags'),
+      .option('--tags <tags>', 'Comma-separated tags')
+      .option('--omit-content', 'Exclude thread content from response (returns metadata, tasks and state only)'),
   ).action(
     withAction(async (agentId: unknown, opts: unknown) => {
       const o = opts as {
         offset?: string; limit?: string; state?: string;
         startDate?: string; endDate?: string; dateOrder?: string; tags?: string;
+        omitContent?: boolean;
       };
       const client = createClient();
-      return client.listThreads(agentId as string, {
+      const result = await client.listThreads(agentId as string, {
         ...parseListOpts(o),
         state: o.state,
         startDate: o.startDate,
         endDate: o.endDate,
         dateOrder: o.dateOrder,
         tags: o.tags,
+        omitContent: o.omitContent,
       });
+      // Strip threadContent client-side when --omit-content is used (fallback if API doesn't support it yet)
+      if (o.omitContent) {
+        const data = result as any;
+        const items = data.threads ?? (Array.isArray(data) ? data : []);
+        for (const thread of items) {
+          delete thread.threadContent;
+        }
+      }
+      return result;
     }, (d) => {
       const data = d as any;
       const items = data.threads ?? (Array.isArray(data) ? data : []);
@@ -252,12 +264,24 @@ export function registerAgentCommands(program: Command): void {
       const lines = [
         md.h(2, 'Threads'),
         '',
-        md.table(items.map((t: any) => ({
-          id: t.threadId ?? t._id,
-          state: `${md.status(t.state)} ${t.state}`,
-          message: (t.message || t.name || '-').slice(0, 40),
-          created: t.createdAt ?? (t.creationTimestampMs ? new Date(t.creationTimestampMs).toLocaleString() : '-'),
-        })), { columns: ['id', 'state', 'message', 'created'] }),
+        md.table(items.map((t: any) => {
+          const tasks = t.tasks as Array<{ title?: string; description?: string; completed: boolean }> | undefined;
+          let tasksSummary = '-';
+          if (tasks && tasks.length > 0) {
+            const done = tasks.filter((tk: any) => tk.completed).length;
+            const names = tasks
+              .map((tk: any) => tk.title || tk.description || '(untitled)')
+              .slice(0, 3)
+              .join(', ');
+            tasksSummary = `${done}/${tasks.length}: ${names}`;
+          }
+          return {
+            id: t.threadId ?? t._id,
+            state: `${md.status(t.state)} ${t.state}`,
+            tasks: tasksSummary,
+            created: t.createdAt ?? (t.creationTimestampMs ? new Date(t.creationTimestampMs).toLocaleString() : '-'),
+          };
+        }), { columns: ['id', 'state', 'tasks', 'created'] }),
       ];
       if (data.total != null) lines.push(md.pagination(data));
       return lines.join('\n');
@@ -269,11 +293,20 @@ export function registerAgentCommands(program: Command): void {
     .command('get <threadId>')
     .description('Get thread details')
     .option('--with-tasks', 'Include tasks in response')
+    .option('--grep <pattern>', 'Filter thread content to only show messages matching the pattern (case-insensitive)')
     .action(
       withAction(async (threadId: unknown, opts: unknown) => {
-        const o = opts as { withTasks?: boolean };
+        const o = opts as { withTasks?: boolean; grep?: string };
         const client = createClient();
-        return client.getThread(threadId as string, o.withTasks);
+        const thread = await client.getThread(threadId as string, o.withTasks);
+        if (o.grep && thread.threadContent) {
+          const pattern = o.grep.toLowerCase();
+          thread.threadContent = thread.threadContent.filter((msg) => {
+            const serialized = JSON.stringify(msg).toLowerCase();
+            return serialized.includes(pattern);
+          });
+        }
+        return thread;
       }, (d) => formatThread(d as AgentThreadDto)),
     );
 
