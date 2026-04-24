@@ -18,6 +18,18 @@ import type {
 } from './types.js';
 import { DevicApiError } from './errors.js';
 
+const ENVELOPE_KEYS = new Set(['success', 'data', 'meta', 'error']);
+
+function isGatewayEnvelope(value: unknown): value is { data: unknown } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  if (!('data' in obj)) return false;
+  for (const key of Object.keys(obj)) {
+    if (!ENVELOPE_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
 export interface DevicApiClientConfig {
   apiKey: string;
   baseUrl: string;
@@ -45,7 +57,15 @@ export class DevicApiClient {
       let errorData: ApiError;
       try {
         const body = await response.json();
-        errorData = body.error ?? { statusCode: response.status, message: body.message ?? response.statusText };
+        if (body && typeof body.error === 'object' && body.error !== null) {
+          errorData = body.error as ApiError;
+        } else {
+          errorData = {
+            statusCode: typeof body?.statusCode === 'number' ? body.statusCode : response.status,
+            message: body?.message ?? response.statusText,
+            error: typeof body?.error === 'string' ? body.error : undefined,
+          };
+        }
       } catch {
         errorData = { statusCode: response.status, message: response.statusText };
       }
@@ -54,7 +74,7 @@ export class DevicApiClient {
     }
 
     const data = await response.json();
-    if (data && typeof data === 'object' && 'data' in data) {
+    if (isGatewayEnvelope(data)) {
       return data.data as T;
     }
     return data as T;
