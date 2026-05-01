@@ -10,6 +10,8 @@ import { registerAssistantCommands } from './commands/assistants.js';
 import { registerAgentCommands } from './commands/agents.js';
 import { registerToolServerCommands } from './commands/tool-servers.js';
 import { registerFeedbackCommands } from './commands/feedback.js';
+import { registerProjectCommands } from './commands/projects.js';
+import { registerDocumentCommands } from './commands/documents.js';
 
 const program = new Command();
 
@@ -34,6 +36,8 @@ registerAssistantCommands(program);
 registerAgentCommands(program);
 registerToolServerCommands(program);
 registerFeedbackCommands(program);
+registerProjectCommands(program);
+registerDocumentCommands(program);
 
 // Global error handler
 program.exitOverride();
