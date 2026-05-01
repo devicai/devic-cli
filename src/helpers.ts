@@ -2,22 +2,54 @@ import { readFileSync } from 'node:fs';
 import { DevicApiClient } from './client.js';
 import { DevicCliError } from './errors.js';
 import { DevicApiError } from './errors.js';
-import { loadConfig } from './config.js';
+import { loadConfig, saveConfig } from './config.js';
 import { output, outputError } from './output.js';
 import { EXIT_CODES } from './types.js';
+import { refreshAccessToken } from './oauth.js';
 import type { Command } from 'commander';
+
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000; // refresh if <60s left
 
 /** Create an authenticated API client from config/env */
 export function createClient(): DevicApiClient {
   const config = loadConfig();
+  const baseUrl = config.baseUrl ?? 'https://api.devic.ai';
+
+  if (config.oauth?.accessToken) {
+    return new DevicApiClient({
+      apiKey: config.oauth.accessToken,
+      baseUrl,
+      refreshToken: async () => {
+        const fresh = await loadConfig();
+        if (!fresh.oauth?.refreshToken) {
+          throw new DevicCliError(
+            'OAuth session expired. Run `devic auth login` to re-authenticate.',
+            'AUTH_REQUIRED',
+            EXIT_CODES.AUTH_REQUIRED,
+          );
+        }
+        const tokens = await refreshAccessToken({
+          baseUrl,
+          clientId: fresh.oauth.clientId,
+          refreshToken: fresh.oauth.refreshToken,
+        });
+        saveConfig({ oauth: tokens });
+        return tokens.accessToken;
+      },
+      shouldRefreshProactively: () =>
+        !!config.oauth &&
+        config.oauth.expiresAt - Date.now() < ACCESS_TOKEN_REFRESH_SKEW_MS,
+    });
+  }
+
   if (!config.apiKey) {
     throw new DevicCliError(
-      'Not authenticated. Run `devic auth login --api-key <key>` or set DEVIC_API_KEY.',
+      'Not authenticated. Run `devic auth login` (or `devic auth login --api-key <key>` for legacy auth).',
       'AUTH_REQUIRED',
       EXIT_CODES.AUTH_REQUIRED,
     );
   }
-  return new DevicApiClient({ apiKey: config.apiKey, baseUrl: config.baseUrl ?? 'https://api.devic.ai' });
+  return new DevicApiClient({ apiKey: config.apiKey, baseUrl });
 }
 
 /** Read JSON from a file path or stdin (when path is "-") */

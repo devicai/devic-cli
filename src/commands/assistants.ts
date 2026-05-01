@@ -28,12 +28,13 @@ export function registerAssistantCommands(program: Command): void {
     assistants
       .command('list')
       .description('List all assistant specializations')
-      .option('--external', 'Only show externally accessible assistants'),
+      .option('--external', 'Only show externally accessible assistants')
+      .option('--project <projectId>', 'Filter assistants by project ID'),
   ).action(
     withAction(async (opts: unknown) => {
-      const o = opts as { external?: boolean };
+      const o = opts as { external?: boolean; project?: string };
       const client = createClient();
-      return client.getAssistants(!!o.external);
+      return client.getAssistants(!!o.external, o.project);
     }, (d) => {
       const items = d as AssistantSpecialization[];
       if (items.length === 0) return '_No assistants found._';
@@ -96,18 +97,26 @@ export function registerAssistantCommands(program: Command): void {
     .description('Create a new assistant')
     .option('--name <name>', 'Assistant name')
     .option('--description <desc>', 'Assistant description')
+    .option('--project <projectId>', 'Project ID this assistant belongs to')
     .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)')
     .action(
       withAction(async (opts: unknown) => {
-        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const o = opts as {
+          name?: string;
+          description?: string;
+          project?: string;
+          fromJson?: string;
+        };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
           data = await readJsonInput(o.fromJson);
+          if (o.project && !data.projectId) data.projectId = o.project;
         } else {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
+          if (o.project) data.projectId = o.project;
         }
         return client.createAssistant(data);
       }, (d) => {
@@ -122,10 +131,16 @@ export function registerAssistantCommands(program: Command): void {
     .description('Update an assistant')
     .option('--name <name>', 'Assistant name')
     .option('--description <desc>', 'Assistant description')
+    .option('--project <projectId>', 'Project ID (use "null" to unset)')
     .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
     .action(
       withAction(async (identifier: unknown, opts: unknown) => {
-        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const o = opts as {
+          name?: string;
+          description?: string;
+          project?: string;
+          fromJson?: string;
+        };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
@@ -134,6 +149,8 @@ export function registerAssistantCommands(program: Command): void {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
+          if (o.project !== undefined)
+            data.projectId = o.project === 'null' ? null : o.project;
         }
         return client.updateAssistant(identifier as string, data);
       }, (d) => {

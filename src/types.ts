@@ -250,9 +250,21 @@ export interface ToolDefinition {
 
 export type OutputFormat = 'json' | 'human';
 
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  /** Unix epoch ms when the access token expires */
+  expiresAt: number;
+  scope?: string;
+  clientId: string;
+}
+
 export interface CliConfig {
+  /** Long-lived API key (legacy `devic-XXX` flow) */
   apiKey?: string;
   baseUrl?: string;
+  /** OAuth tokens (preferred when present) */
+  oauth?: OAuthTokens;
 }
 
 export interface PollOptions {

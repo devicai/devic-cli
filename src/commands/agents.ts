@@ -66,12 +66,22 @@ export function registerAgentCommands(program: Command): void {
     agents
       .command('list')
       .description('List all agents')
-      .option('--archived', 'Include archived agents'),
+      .option('--archived', 'Include archived agents')
+      .option('--project <projectId>', 'Filter agents by project ID'),
   ).action(
     withAction(async (opts: unknown) => {
-      const o = opts as { offset?: string; limit?: string; archived?: boolean };
+      const o = opts as {
+        offset?: string;
+        limit?: string;
+        archived?: boolean;
+        project?: string;
+      };
       const client = createClient();
-      return client.listAgents({ ...parseListOpts(o), archived: o.archived });
+      return client.listAgents({
+        ...parseListOpts(o),
+        archived: o.archived,
+        projectId: o.project,
+      });
     }, (d) => {
       const data = d as any;
       const items = data.agents ?? (Array.isArray(data) ? data : []);
@@ -108,18 +118,26 @@ export function registerAgentCommands(program: Command): void {
     .description('Create a new agent')
     .option('--name <name>', 'Agent name')
     .option('--description <desc>', 'Agent description')
+    .option('--project <projectId>', 'Project ID this agent belongs to')
     .option('--from-json <file>', 'Read full agent config from JSON file (- for stdin)')
     .action(
       withAction(async (opts: unknown) => {
-        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const o = opts as {
+          name?: string;
+          description?: string;
+          project?: string;
+          fromJson?: string;
+        };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
           data = await readJsonInput(o.fromJson);
+          if (o.project && !data.projectId) data.projectId = o.project;
         } else {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
+          if (o.project) data.projectId = o.project;
         }
         return client.createAgent(data);
       }, (d) => {
@@ -134,10 +152,16 @@ export function registerAgentCommands(program: Command): void {
     .description('Update an agent')
     .option('--name <name>', 'Agent name')
     .option('--description <desc>', 'Agent description')
+    .option('--project <projectId>', 'Project ID (use "null" to unset)')
     .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
     .action(
       withAction(async (agentId: unknown, opts: unknown) => {
-        const o = opts as { name?: string; description?: string; fromJson?: string };
+        const o = opts as {
+          name?: string;
+          description?: string;
+          project?: string;
+          fromJson?: string;
+        };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
@@ -146,6 +170,8 @@ export function registerAgentCommands(program: Command): void {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
+          if (o.project !== undefined)
+            data.projectId = o.project === 'null' ? null : o.project;
         }
         return client.updateAgent(agentId as string, data);
       }, (d) => {

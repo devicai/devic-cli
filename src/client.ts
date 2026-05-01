@@ -33,16 +33,51 @@ function isGatewayEnvelope(value: unknown): value is { data: unknown } {
 export interface DevicApiClientConfig {
   apiKey: string;
   baseUrl: string;
+  /** Optional async hook to obtain a new access token after a 401. */
+  refreshToken?: () => Promise<string>;
+  /** Optional hook that returns true when the token should be refreshed before sending. */
+  shouldRefreshProactively?: () => boolean;
 }
 
 export class DevicApiClient {
   private config: DevicApiClientConfig;
+  private refreshing?: Promise<string>;
 
   constructor(config: DevicApiClientConfig) {
     this.config = config;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async refresh(): Promise<string> {
+    if (!this.config.refreshToken) {
+      throw new Error('No refresh handler configured');
+    }
+    if (!this.refreshing) {
+      this.refreshing = this.config.refreshToken().finally(() => {
+        this.refreshing = undefined;
+      });
+    }
+    const next = await this.refreshing;
+    this.config.apiKey = next;
+    return next;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    isRetry = false,
+  ): Promise<T> {
+    if (
+      !isRetry &&
+      this.config.refreshToken &&
+      this.config.shouldRefreshProactively?.()
+    ) {
+      try {
+        await this.refresh();
+      } catch {
+        // Fall through; the request will likely 401 and we'll surface the original error.
+      }
+    }
+
     const url = `${this.config.baseUrl}${endpoint}`;
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -54,6 +89,16 @@ export class DevicApiClient {
     const response = await fetch(url, { ...options, headers });
 
     if (!response.ok) {
+      // Auto-refresh on 401 if we have a refresh hook, then retry once.
+      if (response.status === 401 && this.config.refreshToken && !isRetry) {
+        try {
+          await this.refresh();
+          return this.request<T>(endpoint, options, true);
+        } catch (err) {
+          // Refresh failed — fall through to surface the original 401.
+        }
+      }
+
       let errorData: ApiError;
       try {
         const body = await response.json();
@@ -82,9 +127,12 @@ export class DevicApiClient {
 
   // ── Assistants ──
 
-  async getAssistants(external = false): Promise<AssistantSpecialization[]> {
-    const query = external ? '?external=true' : '';
-    return this.request<AssistantSpecialization[]>(`/api/v1/assistants${query}`);
+  async getAssistants(external = false, projectId?: string): Promise<AssistantSpecialization[]> {
+    const params = new URLSearchParams();
+    if (external) params.set('external', 'true');
+    if (projectId) params.set('projectId', projectId);
+    const q = params.toString();
+    return this.request<AssistantSpecialization[]>(`/api/v1/assistants${q ? `?${q}` : ''}`);
   }
 
   async getAssistant(identifier: string): Promise<AssistantSpecialization> {
@@ -181,11 +229,17 @@ export class DevicApiClient {
 
   // ── Agents ──
 
-  async listAgents(opts?: { offset?: number; limit?: number; archived?: boolean }): Promise<unknown> {
+  async listAgents(opts?: {
+    offset?: number;
+    limit?: number;
+    archived?: boolean;
+    projectId?: string;
+  }): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     if (opts?.limit != null) params.set('limit', String(opts.limit));
     if (opts?.archived != null) params.set('archived', String(opts.archived));
+    if (opts?.projectId) params.set('projectId', opts.projectId);
     const q = params.toString();
     return this.request(`/api/v1/agents${q ? `?${q}` : ''}`);
   }
@@ -378,6 +432,215 @@ export class DevicApiClient {
     return this.request(`/api/v1/tool-servers/${toolServerId}/tools/${toolName}/test`, {
       method: 'POST',
       body: JSON.stringify({ parameters }),
+    });
+  }
+
+  // ── Projects ──
+
+  async listProjects(opts?: { archived?: boolean }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.archived != null) params.set('archived', String(opts.archived));
+    const q = params.toString();
+    return this.request(`/api/v1/projects${q ? `?${q}` : ''}`);
+  }
+
+  async getProject(projectId: string): Promise<unknown> {
+    return this.request(`/api/v1/projects/${projectId}`);
+  }
+
+  async createProject(data: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/projects`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateProject(projectId: string, data: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async archiveProject(projectId: string): Promise<unknown> {
+    return this.request(`/api/v1/projects/${projectId}`, { method: 'DELETE' });
+  }
+
+  async getProjectThreads(
+    projectId: string,
+    opts?: { offset?: number; limit?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    const q = params.toString();
+    return this.request(`/api/v1/projects/${projectId}/threads${q ? `?${q}` : ''}`);
+  }
+
+  async getProjectConversations(
+    projectId: string,
+    opts?: { offset?: number; limit?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    const q = params.toString();
+    return this.request(`/api/v1/projects/${projectId}/conversations${q ? `?${q}` : ''}`);
+  }
+
+  async getProjectStats(projectId: string): Promise<unknown> {
+    return this.request(`/api/v1/projects/${projectId}/stats`);
+  }
+
+  async getProjectDailyCosts(
+    projectId: string,
+    opts?: { startDate?: string; endDate?: string; tenantId?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.startDate) params.set('startDate', opts.startDate);
+    if (opts?.endDate) params.set('endDate', opts.endDate);
+    if (opts?.tenantId) params.set('tenantId', opts.tenantId);
+    const q = params.toString();
+    return this.request(`/api/v1/projects/${projectId}/costs/daily${q ? `?${q}` : ''}`);
+  }
+
+  async getProjectMonthlyCosts(
+    projectId: string,
+    opts?: { startMonth?: string; endMonth?: string; tenantId?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.startMonth) params.set('startMonth', opts.startMonth);
+    if (opts?.endMonth) params.set('endMonth', opts.endMonth);
+    if (opts?.tenantId) params.set('tenantId', opts.tenantId);
+    const q = params.toString();
+    return this.request(`/api/v1/projects/${projectId}/costs/monthly${q ? `?${q}` : ''}`);
+  }
+
+  // ── Documents ──
+
+  async listDocuments(opts?: {
+    projectId?: string;
+    status?: string;
+    fileType?: string;
+    search?: string;
+    folderId?: string;
+    parentOnly?: boolean;
+    offset?: number;
+    limit?: number;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.projectId) params.set('projectId', opts.projectId);
+    if (opts?.status) params.set('status', opts.status);
+    if (opts?.fileType) params.set('fileType', opts.fileType);
+    if (opts?.search) params.set('search', opts.search);
+    if (opts?.folderId) params.set('folderId', opts.folderId);
+    if (opts?.parentOnly) params.set('parentOnly', 'true');
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    const q = params.toString();
+    return this.request(`/api/v1/documents${q ? `?${q}` : ''}`);
+  }
+
+  async getDocument(documentId: string): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}`);
+  }
+
+  async createMarkdownDocument(data: {
+    name: string;
+    markdownContent: string;
+    projectId?: string;
+    parentDocumentId?: string;
+  }): Promise<unknown> {
+    return this.request(`/api/v1/documents`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateDocument(documentId: string, data: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteDocument(documentId: string): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}`, { method: 'DELETE' });
+  }
+
+  async listDocumentVersions(documentId: string): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/versions`);
+  }
+
+  async getDocumentVersion(documentId: string, version: number): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/versions/${version}`);
+  }
+
+  async revertDocument(documentId: string, version: number): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/revert/${version}`, {
+      method: 'POST',
+    });
+  }
+
+  async getDocumentSubdocuments(documentId: string): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/subdocuments`);
+  }
+
+  async getDocumentUsage(documentId: string): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/usage`);
+  }
+
+  async attachDocument(
+    documentId: string,
+    targetType: 'agent' | 'assistant',
+    targetId: string,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/attach`, {
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId }),
+    });
+  }
+
+  async detachDocument(
+    documentId: string,
+    targetType: 'agent' | 'assistant',
+    targetId: string,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/documents/${documentId}/detach`, {
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId }),
+    });
+  }
+
+  // ── Document Folders ──
+
+  async listDocumentFolders(opts?: { projectId?: string }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.projectId) params.set('projectId', opts.projectId);
+    const q = params.toString();
+    return this.request(`/api/v1/document-folders${q ? `?${q}` : ''}`);
+  }
+
+  async createDocumentFolder(data: {
+    name: string;
+    projectId?: string;
+    parentFolderId?: string;
+    color?: string;
+  }): Promise<unknown> {
+    return this.request(`/api/v1/document-folders`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateDocumentFolder(folderId: string, data: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/document-folders/${folderId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteDocumentFolder(folderId: string, deleteDocuments = false): Promise<unknown> {
+    const q = deleteDocuments ? '?deleteDocuments=true' : '';
+    return this.request(`/api/v1/document-folders/${folderId}${q}`, {
+      method: 'DELETE',
     });
   }
 }
