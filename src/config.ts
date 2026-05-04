@@ -31,6 +31,7 @@ export function loadConfig(): CliConfig {
   return {
     apiKey: process.env['DEVIC_API_KEY'] ?? file.apiKey,
     baseUrl: globalBaseUrl ?? process.env['DEVIC_BASE_URL'] ?? file.baseUrl ?? 'https://api.devic.ai',
+    oauth: file.oauth,
   };
 }
 
