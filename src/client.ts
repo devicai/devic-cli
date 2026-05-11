@@ -437,9 +437,15 @@ export class DevicApiClient {
 
   // ── Projects ──
 
-  async listProjects(opts?: { archived?: boolean }): Promise<unknown> {
+  async listProjects(opts?: {
+    archived?: boolean;
+    offset?: number;
+    limit?: number;
+  }): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.archived != null) params.set('archived', String(opts.archived));
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
     const q = params.toString();
     return this.request(`/api/v1/projects${q ? `?${q}` : ''}`);
   }

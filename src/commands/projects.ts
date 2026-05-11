@@ -43,35 +43,41 @@ export function registerProjectCommands(program: Command): void {
   const projects = program.command('projects').description('Manage projects');
 
   // projects list
-  projects
-    .command('list')
-    .description('List projects')
-    .option('--archived', 'Include archived projects')
-    .action(
-      withAction(async (opts: unknown) => {
-        const o = opts as { archived?: boolean };
-        const client = createClient();
-        return client.listProjects({ archived: o.archived });
-      }, (d) => {
-        const items = (d as any) ?? [];
-        if (!Array.isArray(items) || items.length === 0)
-          return '_No projects found._';
-        return [
-          md.h(2, 'Projects'),
-          '',
-          md.table(
-            items.map((p: any) => ({
-              id: p._id,
-              identifier: p.identifier,
-              name: p.name,
-              visibility: p.visibility ?? 'private',
-              archived: p.archived ?? false,
-            })),
-            { columns: ['id', 'identifier', 'name', 'visibility', 'archived'] },
-          ),
-        ].join('\n');
-      }),
-    );
+  addListOptions(
+    projects
+      .command('list')
+      .description('List projects')
+      .option('--archived', 'Include archived projects'),
+  ).action(
+    withAction(async (opts: unknown) => {
+      const o = opts as { archived?: boolean; offset?: string; limit?: string };
+      const client = createClient();
+      return client.listProjects({
+        archived: o.archived,
+        ...parseListOpts(o),
+      });
+    }, (d) => {
+      const data = d as any;
+      const items = data?.projects ?? (Array.isArray(data) ? data : []);
+      if (items.length === 0) return '_No projects found._';
+      const lines = [
+        md.h(2, 'Projects'),
+        '',
+        md.table(
+          items.map((p: any) => ({
+            id: p._id,
+            identifier: p.identifier,
+            name: p.name,
+            visibility: p.visibility ?? 'private',
+            archived: p.archived ?? false,
+          })),
+          { columns: ['id', 'identifier', 'name', 'visibility', 'archived'] },
+        ),
+      ];
+      if (data?.total != null) lines.push(md.pagination(data));
+      return lines.join('\n');
+    }),
+  );
 
   // projects get <id>
   projects
