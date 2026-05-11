@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { setOutputFormat } from './output.js';
 import { outputError } from './output.js';
@@ -13,12 +16,16 @@ import { registerFeedbackCommands } from './commands/feedback.js';
 import { registerProjectCommands } from './commands/projects.js';
 import { registerDocumentCommands } from './commands/documents.js';
 
+const pkg = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
+) as { version: string };
+
 const program = new Command();
 
 program
   .name('devic')
   .description('CLI for the Devic AI Platform API')
-  .version('0.2.1')
+  .version(pkg.version)
   .option('-o, --output <format>', 'Output format: json or human')
   .option('--base-url <url>', 'API base URL (overrides config and env)')
   .hook('preAction', (thisCommand) => {
