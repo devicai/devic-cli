@@ -1,7 +1,47 @@
 import { Command } from 'commander';
 import { createClient, withAction, addListOptions, parseListOpts, readJsonInput } from '../helpers.js';
 import { md } from '../output.js';
+import { DevicCliError } from '../errors.js';
 import type { ToolServerDto, ToolDefinition } from '../types.js';
+
+type DevicApiClient = ReturnType<typeof createClient>;
+
+async function renameToolInDefinition(
+  client: DevicApiClient,
+  toolServerId: string,
+  oldName: string,
+  newName: string,
+): Promise<{ oldName: string; newName: string }> {
+  if (!newName || typeof newName !== 'string') {
+    throw new DevicCliError('A non-empty new tool name is required.', 'INVALID_TOOL_NAME');
+  }
+  if (oldName === newName) {
+    throw new DevicCliError(
+      `The new tool name is identical to the current one ("${oldName}"). Nothing to rename.`,
+      'TOOL_NAME_UNCHANGED',
+    );
+  }
+  const definition = (await client.getToolServerDefinition(toolServerId)) as {
+    toolDefinitions?: ToolDefinition[];
+  };
+  const toolDefinitions = definition?.toolDefinitions ?? [];
+  const target = toolDefinitions.find((t) => t.function?.name === oldName);
+  if (!target) {
+    throw new DevicCliError(
+      `Tool "${oldName}" not found in tool server ${toolServerId}.`,
+      'TOOL_NOT_FOUND',
+    );
+  }
+  if (toolDefinitions.some((t) => t.function?.name === newName)) {
+    throw new DevicCliError(
+      `A tool named "${newName}" already exists in this tool server.`,
+      'TOOL_NAME_CONFLICT',
+    );
+  }
+  target.function.name = newName;
+  await client.updateToolServerDefinition(toolServerId, { toolDefinitions });
+  return { oldName, newName };
+}
 
 function formatToolServer(ts: ToolServerDto): string {
   const lines = [
@@ -264,15 +304,79 @@ export function registerToolServerCommands(program: Command): void {
   // tool-servers tools update <toolServerId> <toolName>
   tools
     .command('update <toolServerId> <toolName>')
-    .description('Update a tool definition')
-    .requiredOption('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
+    .description(
+      'Update a tool definition. Does not support renaming (function.name is immutable here). To rename a tool, use: devic tool-servers tools rename <toolServerId> <oldName> <newName> — or pass --rename-to <newName> as a shortcut.',
+    )
+    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
+    .option('--rename-to <newName>', 'Rename the tool. Runs the full update-definition flow under the hood; cannot be combined with --from-json.')
     .action(
       withAction(async (toolServerId: unknown, toolName: unknown, opts: unknown) => {
-        const o = opts as { fromJson: string };
+        const o = opts as { fromJson?: string; renameTo?: string };
         const client = createClient();
+        const id = toolServerId as string;
+        const name = toolName as string;
+
+        if (o.renameTo) {
+          if (o.fromJson) {
+            throw new DevicCliError(
+              '--rename-to cannot be combined with --from-json. Rename first, then update the tool by its new name.',
+              'INVALID_USAGE',
+            );
+          }
+          const result = await renameToolInDefinition(client, id, name, o.renameTo);
+          return { _action: 'renamed', ...result };
+        }
+
+        if (!o.fromJson) {
+          throw new DevicCliError(
+            'Either --from-json <file> or --rename-to <newName> is required.',
+            'INVALID_USAGE',
+          );
+        }
+
         const data = await readJsonInput(o.fromJson);
-        return client.updateTool(toolServerId as string, toolName as string, data);
-      }, () => md.success('Tool updated.')),
+        const payloadName = (data as { function?: { name?: unknown } })?.function?.name;
+        if (typeof payloadName === 'string' && payloadName !== name) {
+          throw new DevicCliError(
+            [
+              `The field "function.name" cannot be modified with this command.`,
+              `  Detected name change: "${name}" -> "${payloadName}".`,
+              `  To rename a tool, use one of:`,
+              `    devic tool-servers tools rename ${id} ${name} ${payloadName}`,
+              `    devic tool-servers tools update ${id} ${name} --rename-to ${payloadName}`,
+            ].join('\n'),
+            'TOOL_RENAME_NOT_SUPPORTED',
+          );
+        }
+
+        return client.updateTool(id, name, data);
+      }, (d) => {
+        const r = d as { _action?: string; oldName?: string; newName?: string };
+        if (r?._action === 'renamed') {
+          return md.success(`Tool renamed: ${md.code(r.oldName!)} -> ${md.code(r.newName!)}`);
+        }
+        return md.success('Tool updated.');
+      }),
+    );
+
+  // tool-servers tools rename <toolServerId> <oldName> <newName>
+  tools
+    .command('rename <toolServerId> <oldName> <newName>')
+    .description('Rename a tool. Internally fetches the tool server definition, swaps function.name and PATCHes the definition back.')
+    .action(
+      withAction(async (toolServerId: unknown, oldName: unknown, newName: unknown) => {
+        const client = createClient();
+        const result = await renameToolInDefinition(
+          client,
+          toolServerId as string,
+          oldName as string,
+          newName as string,
+        );
+        return { _action: 'renamed', ...result };
+      }, (d) => {
+        const r = d as { oldName: string; newName: string };
+        return md.success(`Tool renamed: ${md.code(r.oldName)} -> ${md.code(r.newName)}`);
+      }),
     );
 
   // tool-servers tools delete <toolServerId> <toolName>
