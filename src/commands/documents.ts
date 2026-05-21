@@ -85,7 +85,7 @@ export function registerDocumentCommands(program: Command): void {
         parentOnly?: boolean;
       };
       const client = createClient();
-      return client.listDocuments({
+      const result = (await client.listDocuments({
         ...parseListOpts(o),
         projectId: o.project,
         status: o.status,
@@ -93,7 +93,17 @@ export function registerDocumentCommands(program: Command): void {
         search: o.search,
         folderId: o.folder,
         parentOnly: o.parentOnly,
-      });
+      })) as any;
+      const stripContent = (doc: any) => {
+        if (!doc || typeof doc !== 'object') return doc;
+        const { markdownContent, ...rest } = doc;
+        return rest;
+      };
+      if (Array.isArray(result)) return result.map(stripContent);
+      if (result?.documents && Array.isArray(result.documents)) {
+        return { ...result, documents: result.documents.map(stripContent) };
+      }
+      return result;
     }, (d) => {
       const data = d as any;
       const items = data.documents ?? (Array.isArray(data) ? data : []);
