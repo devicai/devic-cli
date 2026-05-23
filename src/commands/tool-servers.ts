@@ -1,7 +1,16 @@
 import { Command } from 'commander';
-import { createClient, withAction, addListOptions, parseListOpts, readJsonInput } from '../helpers.js';
+import {
+  createClient,
+  withAction,
+  addListOptions,
+  parseListOpts,
+  readJsonInput,
+  readAndValidateJson,
+  addSkipValidationOption,
+} from '../helpers.js';
 import { md } from '../output.js';
 import { DevicCliError } from '../errors.js';
+import { assertValidPayload } from '../validation.js';
 import type { ToolServerDto, ToolDefinition } from '../types.js';
 
 type DevicApiClient = ReturnType<typeof createClient>;
@@ -125,20 +134,21 @@ export function registerToolServerCommands(program: Command): void {
     }, (d) => formatToolServer(d as ToolServerDto)));
 
   // tool-servers create
-  ts
-    .command('create')
-    .description('Create a new tool server')
-    .option('--name <name>', 'Tool server name')
-    .option('--url <url>', 'Base URL')
-    .option('--description <desc>', 'Description')
-    .option('--from-json <file>', 'Read config from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    ts
+      .command('create')
+      .description('Create a new tool server')
+      .option('--name <name>', 'Tool server name')
+      .option('--url <url>', 'Base URL')
+      .option('--description <desc>', 'Description')
+      .option('--from-json <file>', 'Read config from JSON file (- for stdin)'),
+  ).action(
       withAction(async (opts: unknown) => {
-        const o = opts as { name?: string; url?: string; description?: string; fromJson?: string };
+        const o = opts as { name?: string; url?: string; description?: string; fromJson?: string; skipValidation?: boolean };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'tool-server', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;
@@ -153,21 +163,22 @@ export function registerToolServerCommands(program: Command): void {
     );
 
   // tool-servers update <id>
-  ts
-    .command('update <toolServerId>')
-    .description('Update a tool server')
-    .option('--name <name>', 'Tool server name')
-    .option('--url <url>', 'Base URL')
-    .option('--description <desc>', 'Description')
-    .option('--enabled <bool>', 'Enable/disable')
-    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    ts
+      .command('update <toolServerId>')
+      .description('Update a tool server')
+      .option('--name <name>', 'Tool server name')
+      .option('--url <url>', 'Base URL')
+      .option('--description <desc>', 'Description')
+      .option('--enabled <bool>', 'Enable/disable')
+      .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (toolServerId: unknown, opts: unknown) => {
-        const o = opts as { name?: string; url?: string; description?: string; enabled?: string; fromJson?: string };
+        const o = opts as { name?: string; url?: string; description?: string; enabled?: string; fromJson?: string; skipValidation?: boolean };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'tool-server', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;
@@ -234,15 +245,27 @@ export function registerToolServerCommands(program: Command): void {
     );
 
   // tool-servers update-definition <id>
-  ts
-    .command('update-definition <toolServerId>')
-    .description('Update tool server definition')
-    .requiredOption('--from-json <file>', 'Read definition from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    ts
+      .command('update-definition <toolServerId>')
+      .description('Update tool server definition')
+      .requiredOption('--from-json <file>', 'Read definition from JSON file (- for stdin)'),
+  ).action(
       withAction(async (toolServerId: unknown, opts: unknown) => {
-        const o = opts as { fromJson: string };
+        const o = opts as { fromJson: string; skipValidation?: boolean };
         const client = createClient();
         const data = await readJsonInput(o.fromJson);
+        // update-definition expects { toolDefinitions: [...] } — validate as tool-server.
+        assertValidPayload('tool-server', data, { skip: o.skipValidation });
+        // Each tool definition itself is also validated.
+        const defs = (data as { toolDefinitions?: unknown }).toolDefinitions;
+        if (Array.isArray(defs)) {
+          for (const def of defs) {
+            if (def && typeof def === 'object') {
+              assertValidPayload('tool-definition', def as Record<string, unknown>, { skip: o.skipValidation });
+            }
+          }
+        }
         return client.updateToolServerDefinition(toolServerId as string, data);
       }, () => md.success('Tool server definition updated.')),
     );
@@ -288,30 +311,32 @@ export function registerToolServerCommands(program: Command): void {
     }, (d) => formatTool(d as ToolDefinition)));
 
   // tool-servers tools add <toolServerId>
-  tools
-    .command('add <toolServerId>')
-    .description('Add a tool to a tool server')
-    .requiredOption('--from-json <file>', 'Read tool definition from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    tools
+      .command('add <toolServerId>')
+      .description('Add a tool to a tool server')
+      .requiredOption('--from-json <file>', 'Read tool definition from JSON file (- for stdin)'),
+  ).action(
       withAction(async (toolServerId: unknown, opts: unknown) => {
-        const o = opts as { fromJson: string };
+        const o = opts as { fromJson: string; skipValidation?: boolean };
         const client = createClient();
-        const data = await readJsonInput(o.fromJson);
+        const data = await readAndValidateJson(o.fromJson, 'tool-definition', { skip: o.skipValidation });
         return client.addTool(toolServerId as string, data);
       }, () => md.success('Tool added.')),
     );
 
   // tool-servers tools update <toolServerId> <toolName>
-  tools
-    .command('update <toolServerId> <toolName>')
-    .description(
-      'Update a tool definition. Does not support renaming (function.name is immutable here). To rename a tool, use: devic tool-servers tools rename <toolServerId> <oldName> <newName> — or pass --rename-to <newName> as a shortcut.',
-    )
-    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
-    .option('--rename-to <newName>', 'Rename the tool. Runs the full update-definition flow under the hood; cannot be combined with --from-json.')
-    .action(
+  addSkipValidationOption(
+    tools
+      .command('update <toolServerId> <toolName>')
+      .description(
+        'Update a tool definition. Does not support renaming (function.name is immutable here). To rename a tool, use: devic tool-servers tools rename <toolServerId> <oldName> <newName> — or pass --rename-to <newName> as a shortcut.',
+      )
+      .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
+      .option('--rename-to <newName>', 'Rename the tool. Runs the full update-definition flow under the hood; cannot be combined with --from-json.'),
+  ).action(
       withAction(async (toolServerId: unknown, toolName: unknown, opts: unknown) => {
-        const o = opts as { fromJson?: string; renameTo?: string };
+        const o = opts as { fromJson?: string; renameTo?: string; skipValidation?: boolean };
         const client = createClient();
         const id = toolServerId as string;
         const name = toolName as string;
@@ -334,7 +359,7 @@ export function registerToolServerCommands(program: Command): void {
           );
         }
 
-        const data = await readJsonInput(o.fromJson);
+        const data = await readAndValidateJson(o.fromJson, 'tool-definition', { skip: o.skipValidation });
         const payloadName = (data as { function?: { name?: unknown } })?.function?.name;
         if (typeof payloadName === 'string' && payloadName !== name) {
           throw new DevicCliError(

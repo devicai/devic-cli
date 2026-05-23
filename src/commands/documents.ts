@@ -5,7 +5,8 @@ import {
   withAction,
   addListOptions,
   parseListOpts,
-  readJsonInput,
+  readAndValidateJson,
+  addSkipValidationOption,
 } from '../helpers.js';
 import { md } from '../output.js';
 
@@ -141,16 +142,17 @@ export function registerDocumentCommands(program: Command): void {
     );
 
   // documents create
-  documents
-    .command('create')
-    .description('Create a markdown document')
-    .option('--name <name>', 'Document name')
-    .option('--content <text>', 'Inline markdown content')
-    .option('--from-file <path>', 'Read markdown content from file')
-    .option('--project <projectId>', 'Optional project ID')
-    .option('--parent <documentId>', 'Optional parent document ID')
-    .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    documents
+      .command('create')
+      .description('Create a markdown document')
+      .option('--name <name>', 'Document name')
+      .option('--content <text>', 'Inline markdown content')
+      .option('--from-file <path>', 'Read markdown content from file')
+      .option('--project <projectId>', 'Optional project ID')
+      .option('--parent <documentId>', 'Optional parent document ID')
+      .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (opts: unknown) => {
         const o = opts as {
           name?: string;
@@ -159,12 +161,13 @@ export function registerDocumentCommands(program: Command): void {
           project?: string;
           parent?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
 
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'document', { skip: o.skipValidation });
         } else {
           if (!o.name) throw new Error('--name is required (or use --from-json)');
           let content = o.content;
@@ -191,17 +194,18 @@ export function registerDocumentCommands(program: Command): void {
     );
 
   // documents update <id>
-  documents
-    .command('update <documentId>')
-    .description('Update a document (creates a new version when content changes)')
-    .option('--name <name>', 'Document name')
-    .option('--summary <text>', 'Document summary')
-    .option('--content <text>', 'Inline markdown content')
-    .option('--from-file <path>', 'Read markdown content from file')
-    .option('--project <projectId>', 'Project ID (use "null" to unset)')
-    .option('--folder <folderId>', 'Folder ID (use "null" to unset)')
-    .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    documents
+      .command('update <documentId>')
+      .description('Update a document (creates a new version when content changes)')
+      .option('--name <name>', 'Document name')
+      .option('--summary <text>', 'Document summary')
+      .option('--content <text>', 'Inline markdown content')
+      .option('--from-file <path>', 'Read markdown content from file')
+      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--folder <folderId>', 'Folder ID (use "null" to unset)')
+      .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (documentId: unknown, opts: unknown) => {
         const id = documentId as string;
         const o = opts as {
@@ -212,12 +216,13 @@ export function registerDocumentCommands(program: Command): void {
           project?: string;
           folder?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
 
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'document', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;

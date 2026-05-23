@@ -4,7 +4,8 @@ import {
   withAction,
   addListOptions,
   parseListOpts,
-  readJsonInput,
+  readAndValidateJson,
+  addSkipValidationOption,
 } from '../helpers.js';
 import { md } from '../output.js';
 
@@ -91,15 +92,16 @@ export function registerProjectCommands(program: Command): void {
     );
 
   // projects create
-  projects
-    .command('create')
-    .description('Create a project')
-    .option('--name <name>', 'Project name')
-    .option('--identifier <id>', 'URL-friendly identifier (lowercase + hyphens)')
-    .option('--description <desc>', 'Project description')
-    .option('--visibility <vis>', 'public | private', 'private')
-    .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    projects
+      .command('create')
+      .description('Create a project')
+      .option('--name <name>', 'Project name')
+      .option('--identifier <id>', 'URL-friendly identifier (lowercase + hyphens)')
+      .option('--description <desc>', 'Project description')
+      .option('--visibility <vis>', 'public | private', 'private')
+      .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (opts: unknown) => {
         const o = opts as {
           name?: string;
@@ -107,11 +109,12 @@ export function registerProjectCommands(program: Command): void {
           description?: string;
           visibility?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'project', { skip: o.skipValidation });
         } else {
           if (!o.name) throw new Error('--name is required');
           if (!o.identifier) throw new Error('--identifier is required');
@@ -131,16 +134,17 @@ export function registerProjectCommands(program: Command): void {
     );
 
   // projects update <id>
-  projects
-    .command('update <projectId>')
-    .description('Update a project')
-    .option('--name <name>', 'New project name')
-    .option('--description <desc>', 'New description')
-    .option('--visibility <vis>', 'public | private')
-    .option('--archived <bool>', 'Archive flag (true|false)')
-    .option('--image-url <url>', 'Image URL')
-    .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    projects
+      .command('update <projectId>')
+      .description('Update a project')
+      .option('--name <name>', 'New project name')
+      .option('--description <desc>', 'New description')
+      .option('--visibility <vis>', 'public | private')
+      .option('--archived <bool>', 'Archive flag (true|false)')
+      .option('--image-url <url>', 'Image URL')
+      .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (projectId: unknown, opts: unknown) => {
         const id = projectId as string;
         const o = opts as {
@@ -150,11 +154,12 @@ export function registerProjectCommands(program: Command): void {
           archived?: string;
           imageUrl?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'project', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;

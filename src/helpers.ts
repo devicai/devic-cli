@@ -6,6 +6,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { output, outputError } from './output.js';
 import { EXIT_CODES } from './types.js';
 import { refreshAccessToken } from './oauth.js';
+import { assertValidPayload, type EntityKind } from './validation.js';
 import type { Command } from 'commander';
 
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000; // refresh if <60s left
@@ -62,6 +63,34 @@ export async function readJsonInput(path: string): Promise<Record<string, unknow
     return JSON.parse(Buffer.concat(chunks).toString('utf-8'));
   }
   return JSON.parse(readFileSync(path, 'utf-8'));
+}
+
+/**
+ * Read JSON input and validate its top-level fields against the entity schema.
+ * Throws DevicCliError with an actionable, multi-line message if the payload
+ * uses wrong field names (e.g. `systemPrompt` instead of `assistantSpecialization.presets`).
+ *
+ * Pass `{ skip: true }` to bypass validation (wired to the `--skip-validation` flag).
+ */
+export async function readAndValidateJson(
+  path: string,
+  entity: EntityKind,
+  opts: { skip?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const data = await readJsonInput(path);
+  assertValidPayload(entity, data, opts);
+  return data;
+}
+
+/**
+ * Adds a `--skip-validation` flag to a create/update command that accepts `--from-json`.
+ * Use together with {@link readAndValidateJson}.
+ */
+export function addSkipValidationOption(cmd: Command): Command {
+  return cmd.option(
+    '--skip-validation',
+    'Skip client-side payload validation (use when sending fields newer than this CLI knows about).',
+  );
 }
 
 /**

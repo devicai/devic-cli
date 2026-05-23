@@ -1,5 +1,13 @@
 import { Command } from 'commander';
-import { createClient, withAction, addListOptions, parseListOpts, readJsonInput } from '../helpers.js';
+import {
+  createClient,
+  withAction,
+  addListOptions,
+  parseListOpts,
+  readJsonInput,
+  readAndValidateJson,
+  addSkipValidationOption,
+} from '../helpers.js';
 import { pollThread } from '../polling.js';
 import { md } from '../output.js';
 import type { AgentDto, AgentThreadDto } from '../types.js';
@@ -113,25 +121,27 @@ export function registerAgentCommands(program: Command): void {
     }, (d) => formatAgent(d as AgentDto)));
 
   // agents create
-  agents
-    .command('create')
-    .description('Create a new agent')
-    .option('--name <name>', 'Agent name')
-    .option('--description <desc>', 'Agent description')
-    .option('--project <projectId>', 'Project ID this agent belongs to')
-    .option('--from-json <file>', 'Read full agent config from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    agents
+      .command('create')
+      .description('Create a new agent')
+      .option('--name <name>', 'Agent name')
+      .option('--description <desc>', 'Agent description')
+      .option('--project <projectId>', 'Project ID this agent belongs to')
+      .option('--from-json <file>', 'Read full agent config from JSON file (- for stdin)'),
+  ).action(
       withAction(async (opts: unknown) => {
         const o = opts as {
           name?: string;
           description?: string;
           project?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'agent', { skip: o.skipValidation });
           if (o.project && !data.projectId) data.projectId = o.project;
         } else {
           data = {};
@@ -147,25 +157,27 @@ export function registerAgentCommands(program: Command): void {
     );
 
   // agents update <agentId>
-  agents
-    .command('update <agentId>')
-    .description('Update an agent')
-    .option('--name <name>', 'Agent name')
-    .option('--description <desc>', 'Agent description')
-    .option('--project <projectId>', 'Project ID (use "null" to unset)')
-    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    agents
+      .command('update <agentId>')
+      .description('Update an agent')
+      .option('--name <name>', 'Agent name')
+      .option('--description <desc>', 'Agent description')
+      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (agentId: unknown, opts: unknown) => {
         const o = opts as {
           name?: string;
           description?: string;
           project?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'agent', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;

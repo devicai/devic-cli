@@ -1,5 +1,13 @@
 import { Command } from 'commander';
-import { createClient, withAction, addListOptions, parseListOpts, readJsonInput } from '../helpers.js';
+import {
+  createClient,
+  withAction,
+  addListOptions,
+  parseListOpts,
+  readJsonInput,
+  readAndValidateJson,
+  addSkipValidationOption,
+} from '../helpers.js';
 import { pollChat } from '../polling.js';
 import { md } from '../output.js';
 import type { RealtimeChatHistory, ChatHistory, AssistantSpecialization } from '../types.js';
@@ -92,25 +100,27 @@ export function registerAssistantCommands(program: Command): void {
     );
 
   // assistants create
-  assistants
-    .command('create')
-    .description('Create a new assistant')
-    .option('--name <name>', 'Assistant name')
-    .option('--description <desc>', 'Assistant description')
-    .option('--project <projectId>', 'Project ID this assistant belongs to')
-    .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    assistants
+      .command('create')
+      .description('Create a new assistant')
+      .option('--name <name>', 'Assistant name')
+      .option('--description <desc>', 'Assistant description')
+      .option('--project <projectId>', 'Project ID this assistant belongs to')
+      .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)'),
+  ).action(
       withAction(async (opts: unknown) => {
         const o = opts as {
           name?: string;
           description?: string;
           project?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'assistant', { skip: o.skipValidation });
           if (o.project && !data.projectId) data.projectId = o.project;
         } else {
           data = {};
@@ -126,25 +136,27 @@ export function registerAssistantCommands(program: Command): void {
     );
 
   // assistants update <identifier>
-  assistants
-    .command('update <identifier>')
-    .description('Update an assistant')
-    .option('--name <name>', 'Assistant name')
-    .option('--description <desc>', 'Assistant description')
-    .option('--project <projectId>', 'Project ID (use "null" to unset)')
-    .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)')
-    .action(
+  addSkipValidationOption(
+    assistants
+      .command('update <identifier>')
+      .description('Update an assistant')
+      .option('--name <name>', 'Assistant name')
+      .option('--description <desc>', 'Assistant description')
+      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
+  ).action(
       withAction(async (identifier: unknown, opts: unknown) => {
         const o = opts as {
           name?: string;
           description?: string;
           project?: string;
           fromJson?: string;
+          skipValidation?: boolean;
         };
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
-          data = await readJsonInput(o.fromJson);
+          data = await readAndValidateJson(o.fromJson, 'assistant', { skip: o.skipValidation });
         } else {
           data = {};
           if (o.name) data.name = o.name;
