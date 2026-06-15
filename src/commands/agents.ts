@@ -7,6 +7,7 @@ import {
   readJsonInput,
   readAndValidateJson,
   addSkipValidationOption,
+  resolveProjectId,
 } from '../helpers.js';
 import { pollThread } from '../polling.js';
 import { md } from '../output.js';
@@ -75,7 +76,7 @@ export function registerAgentCommands(program: Command): void {
       .command('list')
       .description('List all agents')
       .option('--archived', 'Include archived agents')
-      .option('--project <projectId>', 'Filter agents by project ID'),
+      .option('--project <project>', 'Filter agents by project (_id, identifier, or name)'),
   ).action(
     withAction(async (opts: unknown) => {
       const o = opts as {
@@ -88,7 +89,7 @@ export function registerAgentCommands(program: Command): void {
       return client.listAgents({
         ...parseListOpts(o),
         archived: o.archived,
-        projectId: o.project,
+        projectId: o.project ? await resolveProjectId(client, o.project) : undefined,
       });
     }, (d) => {
       const data = d as any;
@@ -127,7 +128,7 @@ export function registerAgentCommands(program: Command): void {
       .description('Create a new agent')
       .option('--name <name>', 'Agent name')
       .option('--description <desc>', 'Agent description')
-      .option('--project <projectId>', 'Project ID this agent belongs to')
+      .option('--project <project>', 'Project this agent belongs to (_id, identifier, or name)')
       .option('--from-json <file>', 'Read full agent config from JSON file (- for stdin)'),
   ).action(
       withAction(async (opts: unknown) => {
@@ -142,12 +143,12 @@ export function registerAgentCommands(program: Command): void {
         let data: Record<string, unknown>;
         if (o.fromJson) {
           data = await readAndValidateJson(o.fromJson, 'agent', { skip: o.skipValidation });
-          if (o.project && !data.projectId) data.projectId = o.project;
+          if (o.project && !data.projectId) data.projectId = await resolveProjectId(client, o.project);
         } else {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
-          if (o.project) data.projectId = o.project;
+          if (o.project) data.projectId = await resolveProjectId(client, o.project);
         }
         return client.createAgent(data);
       }, (d) => {
@@ -163,7 +164,7 @@ export function registerAgentCommands(program: Command): void {
       .description('Update an agent')
       .option('--name <name>', 'Agent name')
       .option('--description <desc>', 'Agent description')
-      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (agentId: unknown, opts: unknown) => {
@@ -183,7 +184,7 @@ export function registerAgentCommands(program: Command): void {
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
           if (o.project !== undefined)
-            data.projectId = o.project === 'null' ? null : o.project;
+            data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
         }
         return client.updateAgent(agentId as string, data);
       }, (d) => {

@@ -123,6 +123,66 @@ export function withAction<T>(
   };
 }
 
+/** True when the value is already a Mongo ObjectId (24 hex chars). */
+export function isObjectId(value: string): boolean {
+  return /^[0-9a-fA-F]{24}$/.test(value);
+}
+
+/**
+ * Resolve a user-supplied project reference to its canonical ObjectId.
+ *
+ * Accepts an `_id` (passed through untouched, no API call), an `identifier`,
+ * or a `name`. Identifiers/names are matched case-insensitively against
+ * `projects list` (including archived). Throws an actionable error listing the
+ * available projects when nothing matches, so the agent knows what to use.
+ */
+export async function resolveProjectId(
+  client: DevicApiClient,
+  value: string,
+): Promise<string> {
+  if (isObjectId(value)) return value;
+
+  const needle = value.trim().toLowerCase();
+  const matchIn = (projects: ProjectRef[]): ProjectRef | undefined =>
+    projects.find((p) => (p.identifier ?? '').toLowerCase() === needle) ??
+    projects.find((p) => (p.name ?? '').toLowerCase() === needle);
+
+  // Active projects are the common case (the API's `archived` filter is
+  // exclusive: archived:true returns ONLY archived ones). Try active first and
+  // only pay for a second request — over archived — when there's no match.
+  const active = await fetchProjects(client, false);
+  const match = matchIn(active) ?? matchIn(await fetchProjects(client, true));
+  if (match?._id) return match._id;
+
+  const available = active
+    .map((p) => p.identifier || p._id)
+    .filter(Boolean)
+    .join(', ');
+  throw new DevicCliError(
+    `No project matches "${value}". Pass a project _id, identifier, or name.` +
+      (available ? ` Available: ${available}.` : ' Run `devic projects list` to see them.'),
+    'PROJECT_NOT_FOUND',
+    EXIT_CODES.ERROR,
+  );
+}
+
+async function fetchProjects(
+  client: DevicApiClient,
+  archived: boolean,
+): Promise<ProjectRef[]> {
+  const data = (await client.listProjects({
+    ...(archived ? { archived: true } : {}),
+    limit: 1000,
+  })) as { projects?: ProjectRef[] } | ProjectRef[];
+  return Array.isArray(data) ? data : data?.projects ?? [];
+}
+
+interface ProjectRef {
+  _id?: string;
+  identifier?: string;
+  name?: string;
+}
+
 /** Add common list options to a command */
 export function addListOptions(cmd: Command): Command {
   return cmd
