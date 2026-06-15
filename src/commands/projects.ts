@@ -6,6 +6,7 @@ import {
   parseListOpts,
   readAndValidateJson,
   addSkipValidationOption,
+  resolveProjectId,
 } from '../helpers.js';
 import { md } from '../output.js';
 
@@ -82,12 +83,13 @@ export function registerProjectCommands(program: Command): void {
 
   // projects get <id>
   projects
-    .command('get <projectId>')
-    .description('Get project details')
+    .command('get <project>')
+    .description('Get project details (accepts _id, identifier, or name)')
     .action(
-      withAction(async (projectId: unknown) => {
+      withAction(async (project: unknown) => {
         const client = createClient();
-        return client.getProject(projectId as string);
+        const id = await resolveProjectId(client, project as string);
+        return client.getProject(id);
       }, (d) => formatProject(d as ProjectDto)),
     );
 
@@ -136,8 +138,8 @@ export function registerProjectCommands(program: Command): void {
   // projects update <id>
   addSkipValidationOption(
     projects
-      .command('update <projectId>')
-      .description('Update a project')
+      .command('update <project>')
+      .description('Update a project (accepts _id, identifier, or name)')
       .option('--name <name>', 'New project name')
       .option('--description <desc>', 'New description')
       .option('--visibility <vis>', 'public | private')
@@ -145,8 +147,9 @@ export function registerProjectCommands(program: Command): void {
       .option('--image-url <url>', 'Image URL')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
   ).action(
-      withAction(async (projectId: unknown, opts: unknown) => {
-        const id = projectId as string;
+      withAction(async (project: unknown, opts: unknown) => {
+        const client = createClient();
+        const id = await resolveProjectId(client, project as string);
         const o = opts as {
           name?: string;
           description?: string;
@@ -156,7 +159,6 @@ export function registerProjectCommands(program: Command): void {
           fromJson?: string;
           skipValidation?: boolean;
         };
-        const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
           data = await readAndValidateJson(o.fromJson, 'project', { skip: o.skipValidation });
@@ -177,25 +179,27 @@ export function registerProjectCommands(program: Command): void {
 
   // projects archive <id>
   projects
-    .command('archive <projectId>')
-    .description('Archive a project (soft delete)')
+    .command('archive <project>')
+    .description('Archive a project (soft delete; accepts _id, identifier, or name)')
     .action(
-      withAction(async (projectId: unknown) => {
+      withAction(async (project: unknown) => {
         const client = createClient();
-        return client.archiveProject(projectId as string);
+        const id = await resolveProjectId(client, project as string);
+        return client.archiveProject(id);
       }, () => md.success('Project archived.')),
     );
 
   // projects threads <id>
   addListOptions(
     projects
-      .command('threads <projectId>')
-      .description('List agent threads associated with a project'),
+      .command('threads <project>')
+      .description('List agent threads associated with a project (accepts _id, identifier, or name)'),
   ).action(
-    withAction(async (projectId: unknown, opts: unknown) => {
+    withAction(async (project: unknown, opts: unknown) => {
       const o = opts as { offset?: string; limit?: string };
       const client = createClient();
-      return client.getProjectThreads(projectId as string, parseListOpts(o));
+      const id = await resolveProjectId(client, project as string);
+      return client.getProjectThreads(id, parseListOpts(o));
     }, (d) => {
       const data = d as any;
       const items = data.threads ?? data.data ?? (Array.isArray(data) ? data : []);
@@ -221,14 +225,15 @@ export function registerProjectCommands(program: Command): void {
   // projects conversations <id>
   addListOptions(
     projects
-      .command('conversations <projectId>')
-      .description('List assistant conversations associated with a project'),
+      .command('conversations <project>')
+      .description('List assistant conversations associated with a project (accepts _id, identifier, or name)'),
   ).action(
-    withAction(async (projectId: unknown, opts: unknown) => {
+    withAction(async (project: unknown, opts: unknown) => {
       const o = opts as { offset?: string; limit?: string };
       const client = createClient();
+      const id = await resolveProjectId(client, project as string);
       return client.getProjectConversations(
-        projectId as string,
+        id,
         parseListOpts(o),
       );
     }, (d) => {
@@ -254,12 +259,13 @@ export function registerProjectCommands(program: Command): void {
 
   // projects stats <id>
   projects
-    .command('stats <projectId>')
-    .description('Show project stats summary')
+    .command('stats <project>')
+    .description('Show project stats summary (accepts _id, identifier, or name)')
     .action(
-      withAction(async (projectId: unknown) => {
+      withAction(async (project: unknown) => {
         const client = createClient();
-        return client.getProjectStats(projectId as string);
+        const id = await resolveProjectId(client, project as string);
+        return client.getProjectStats(id);
       }),
     );
 
@@ -267,20 +273,21 @@ export function registerProjectCommands(program: Command): void {
   const costs = projects.command('costs').description('Project cost breakdown');
 
   costs
-    .command('daily <projectId>')
-    .description('Daily costs breakdown')
+    .command('daily <project>')
+    .description('Daily costs breakdown (accepts _id, identifier, or name)')
     .option('--start-date <date>', 'YYYY-MM-DD')
     .option('--end-date <date>', 'YYYY-MM-DD')
     .option('--tenant-id <id>', 'Tenant filter')
     .action(
-      withAction(async (projectId: unknown, opts: unknown) => {
+      withAction(async (project: unknown, opts: unknown) => {
         const o = opts as {
           startDate?: string;
           endDate?: string;
           tenantId?: string;
         };
         const client = createClient();
-        return client.getProjectDailyCosts(projectId as string, o);
+        const id = await resolveProjectId(client, project as string);
+        return client.getProjectDailyCosts(id, o);
       }, (d) => {
         const items = Array.isArray(d) ? d : [];
         if (items.length === 0) return '_No cost data._';
@@ -289,20 +296,21 @@ export function registerProjectCommands(program: Command): void {
     );
 
   costs
-    .command('monthly <projectId>')
-    .description('Monthly costs breakdown')
+    .command('monthly <project>')
+    .description('Monthly costs breakdown (accepts _id, identifier, or name)')
     .option('--start-month <month>', 'YYYY-MM')
     .option('--end-month <month>', 'YYYY-MM')
     .option('--tenant-id <id>', 'Tenant filter')
     .action(
-      withAction(async (projectId: unknown, opts: unknown) => {
+      withAction(async (project: unknown, opts: unknown) => {
         const o = opts as {
           startMonth?: string;
           endMonth?: string;
           tenantId?: string;
         };
         const client = createClient();
-        return client.getProjectMonthlyCosts(projectId as string, o);
+        const id = await resolveProjectId(client, project as string);
+        return client.getProjectMonthlyCosts(id, o);
       }, (d) => {
         const items = Array.isArray(d) ? d : [];
         if (items.length === 0) return '_No cost data._';

@@ -7,6 +7,7 @@ import {
   readJsonInput,
   readAndValidateJson,
   addSkipValidationOption,
+  resolveProjectId,
 } from '../helpers.js';
 import { pollChat } from '../polling.js';
 import { md } from '../output.js';
@@ -37,12 +38,13 @@ export function registerAssistantCommands(program: Command): void {
       .command('list')
       .description('List all assistant specializations')
       .option('--external', 'Only show externally accessible assistants')
-      .option('--project <projectId>', 'Filter assistants by project ID'),
+      .option('--project <project>', 'Filter assistants by project (_id, identifier, or name)'),
   ).action(
     withAction(async (opts: unknown) => {
       const o = opts as { external?: boolean; project?: string };
       const client = createClient();
-      return client.getAssistants(!!o.external, o.project);
+      const projectId = o.project ? await resolveProjectId(client, o.project) : undefined;
+      return client.getAssistants(!!o.external, projectId);
     }, (d) => {
       const items = d as AssistantSpecialization[];
       if (items.length === 0) return '_No assistants found._';
@@ -106,7 +108,7 @@ export function registerAssistantCommands(program: Command): void {
       .description('Create a new assistant')
       .option('--name <name>', 'Assistant name')
       .option('--description <desc>', 'Assistant description')
-      .option('--project <projectId>', 'Project ID this assistant belongs to')
+      .option('--project <project>', 'Project this assistant belongs to (_id, identifier, or name)')
       .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)'),
   ).action(
       withAction(async (opts: unknown) => {
@@ -121,12 +123,12 @@ export function registerAssistantCommands(program: Command): void {
         let data: Record<string, unknown>;
         if (o.fromJson) {
           data = await readAndValidateJson(o.fromJson, 'assistant', { skip: o.skipValidation });
-          if (o.project && !data.projectId) data.projectId = o.project;
+          if (o.project && !data.projectId) data.projectId = await resolveProjectId(client, o.project);
         } else {
           data = {};
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
-          if (o.project) data.projectId = o.project;
+          if (o.project) data.projectId = await resolveProjectId(client, o.project);
         }
         return client.createAssistant(data);
       }, (d) => {
@@ -142,7 +144,7 @@ export function registerAssistantCommands(program: Command): void {
       .description('Update an assistant')
       .option('--name <name>', 'Assistant name')
       .option('--description <desc>', 'Assistant description')
-      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (identifier: unknown, opts: unknown) => {
@@ -162,7 +164,7 @@ export function registerAssistantCommands(program: Command): void {
           if (o.name) data.name = o.name;
           if (o.description) data.description = o.description;
           if (o.project !== undefined)
-            data.projectId = o.project === 'null' ? null : o.project;
+            data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
         }
         return client.updateAssistant(identifier as string, data);
       }, (d) => {

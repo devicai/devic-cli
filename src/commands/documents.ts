@@ -7,6 +7,7 @@ import {
   parseListOpts,
   readAndValidateJson,
   addSkipValidationOption,
+  resolveProjectId,
 } from '../helpers.js';
 import { md } from '../output.js';
 
@@ -67,7 +68,7 @@ export function registerDocumentCommands(program: Command): void {
     documents
       .command('list')
       .description('List documents')
-      .option('--project <projectId>', 'Filter by project ID')
+      .option('--project <project>', 'Filter by project (_id, identifier, or name)')
       .option('--status <status>', 'Filter by status (pending|ready|failed)')
       .option('--file-type <type>', 'Filter by file type (md|pdf|txt|docx)')
       .option('--search <text>', 'Free-text search')
@@ -88,7 +89,7 @@ export function registerDocumentCommands(program: Command): void {
       const client = createClient();
       const result = (await client.listDocuments({
         ...parseListOpts(o),
-        projectId: o.project,
+        projectId: o.project ? await resolveProjectId(client, o.project) : undefined,
         status: o.status,
         fileType: o.fileType,
         search: o.search,
@@ -149,7 +150,7 @@ export function registerDocumentCommands(program: Command): void {
       .option('--name <name>', 'Document name')
       .option('--content <text>', 'Inline markdown content')
       .option('--from-file <path>', 'Read markdown content from file')
-      .option('--project <projectId>', 'Optional project ID')
+      .option('--project <project>', 'Optional project (_id, identifier, or name)')
       .option('--parent <documentId>', 'Optional parent document ID')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
   ).action(
@@ -178,7 +179,7 @@ export function registerDocumentCommands(program: Command): void {
             throw new Error('Provide --content or --from-file');
           }
           data = { name: o.name, markdownContent: content };
-          if (o.project) data.projectId = o.project;
+          if (o.project) data.projectId = await resolveProjectId(client, o.project);
           if (o.parent) data.parentDocumentId = o.parent;
         }
 
@@ -202,7 +203,7 @@ export function registerDocumentCommands(program: Command): void {
       .option('--summary <text>', 'Document summary')
       .option('--content <text>', 'Inline markdown content')
       .option('--from-file <path>', 'Read markdown content from file')
-      .option('--project <projectId>', 'Project ID (use "null" to unset)')
+      .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option('--folder <folderId>', 'Folder ID (use "null" to unset)')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
   ).action(
@@ -233,7 +234,7 @@ export function registerDocumentCommands(program: Command): void {
           }
           if (content != null) data.markdownContent = content;
           if (o.project !== undefined)
-            data.projectId = o.project === 'null' ? null : o.project;
+            data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
           if (o.folder !== undefined)
             data.folderId = o.folder === 'null' ? null : o.folder;
         }
@@ -402,12 +403,13 @@ export function registerDocumentCommands(program: Command): void {
   folders
     .command('list')
     .description('List document folders')
-    .option('--project <projectId>', 'Filter by project')
+    .option('--project <project>', 'Filter by project (_id, identifier, or name)')
     .action(
       withAction(async (opts: unknown) => {
         const o = opts as { project?: string };
         const client = createClient();
-        return client.listDocumentFolders({ projectId: o.project });
+        const projectId = o.project ? await resolveProjectId(client, o.project) : undefined;
+        return client.listDocumentFolders({ projectId });
       }, (d) => {
         const items = (d as any) ?? [];
         if (!Array.isArray(items) || items.length === 0)
@@ -433,7 +435,7 @@ export function registerDocumentCommands(program: Command): void {
     .command('create')
     .description('Create a document folder')
     .requiredOption('--name <name>', 'Folder name')
-    .option('--project <projectId>', 'Project scope')
+    .option('--project <project>', 'Project scope (_id, identifier, or name)')
     .option('--parent <folderId>', 'Parent folder ID')
     .option('--color <color>', 'Color tag')
     .action(
@@ -447,7 +449,7 @@ export function registerDocumentCommands(program: Command): void {
         const client = createClient();
         return client.createDocumentFolder({
           name: o.name,
-          projectId: o.project,
+          projectId: o.project ? await resolveProjectId(client, o.project) : undefined,
           parentFolderId: o.parent,
           color: o.color,
         });
