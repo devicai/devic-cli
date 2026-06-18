@@ -109,6 +109,12 @@ export class DevicApiClient {
             statusCode: typeof body?.statusCode === 'number' ? body.statusCode : response.status,
             message: body?.message ?? response.statusText,
             error: typeof body?.error === 'string' ? body.error : undefined,
+            // Preserve structured error details the backend may attach (e.g.
+            // INVALID_SUBAGENTS) so the CLI can render an actionable hint.
+            field: typeof body?.field === 'string' ? body.field : undefined,
+            invalidSubagents: Array.isArray(body?.invalidSubagents)
+              ? body.invalidSubagents
+              : undefined,
           };
         }
       } catch {

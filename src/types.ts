@@ -126,10 +126,22 @@ export interface ListConversationsResponse {
   limit: number;
 }
 
+/** A subagent reference rejected by the backend, with the reason why. */
+export interface InvalidSubagentRef {
+  id: string;
+  name?: string;
+  reason: 'NOT_FOUND' | 'NOT_ENABLED' | 'ARCHIVED';
+}
+
 export interface ApiError {
   statusCode: number;
   message: string;
+  /** String error code (e.g. `INVALID_SUBAGENTS`, `BAD_REQUEST`). */
   error?: string;
+  /** Dotted path of the offending field, when the backend provides it. */
+  field?: string;
+  /** Populated for `INVALID_SUBAGENTS`: the subagents that failed validation. */
+  invalidSubagents?: InvalidSubagentRef[];
 }
 
 export interface FeedbackSubmission {
