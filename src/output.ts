@@ -19,14 +19,40 @@ export function outputNdjson(data: unknown): void {
   process.stdout.write(JSON.stringify(data) + '\n');
 }
 
-export function outputError(error: { error: string; code: string; statusCode?: number }): void {
-  if (getOutputFormat() === 'human') {
-    process.stderr.write(`\n**Error:** ${error.error}\n`);
-    if (error.code) process.stderr.write(`Code: \`${error.code}\`\n`);
-    if (error.statusCode) process.stderr.write(`Status: ${error.statusCode}\n`);
-  } else {
+interface InvalidSubagentRef {
+  id: string;
+  name?: string;
+  reason: 'NOT_FOUND' | 'NOT_ENABLED' | 'ARCHIVED';
+}
+
+interface OutputErrorShape {
+  error: string;
+  code: string;
+  statusCode?: number;
+  field?: string;
+  invalidSubagents?: InvalidSubagentRef[];
+}
+
+export function outputError(error: OutputErrorShape): void {
+  if (getOutputFormat() !== 'human') {
     process.stderr.write(JSON.stringify(error) + '\n');
+    return;
   }
+
+  // `INVALID_SUBAGENTS` carries a multi-line, actionable hint in `error.error`.
+  // Surface it as a dedicated block so an AI agent driving the CLI sees exactly
+  // which subagents are broken and how to fix them, instead of a one-liner.
+  if (error.code === 'INVALID_SUBAGENTS') {
+    process.stderr.write(`\n${md.warn('Subagent configuration rejected')}\n\n`);
+    process.stderr.write(`${error.error}\n`);
+    process.stderr.write(`\nCode: \`${error.code}\`\n`);
+    if (error.statusCode) process.stderr.write(`Status: ${error.statusCode}\n`);
+    return;
+  }
+
+  process.stderr.write(`\n**Error:** ${error.error}\n`);
+  if (error.code) process.stderr.write(`Code: \`${error.code}\`\n`);
+  if (error.statusCode) process.stderr.write(`Status: ${error.statusCode}\n`);
 }
 
 export function outputHuman(text: string): void {
