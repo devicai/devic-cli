@@ -11,6 +11,7 @@ import {
 } from '../helpers.js';
 import { pollThread } from '../polling.js';
 import { md } from '../output.js';
+import { DevicCliError } from '../errors.js';
 import type { AgentDto, AgentThreadDto } from '../types.js';
 
 function formatAgent(a: AgentDto): string {
@@ -382,6 +383,38 @@ export function registerAgentCommands(program: Command): void {
         const client = createClient();
         return client.resumeThread(threadId as string);
       }, () => md.success('Thread resumed.')),
+    );
+
+  // agents threads message <threadId>
+  threads
+    .command('message <threadId>')
+    .alias('reply')
+    .description('Continue a thread with a new user message')
+    .option('-m, --message <text>', 'Message to send to the thread')
+    .option('--from-json <file>', 'Read the message from a JSON file (- for stdin); uses its "message" field or the whole object')
+    .option('--wait', 'Poll for thread completion after sending')
+    .action(
+      withAction(async (threadId: unknown, opts: unknown) => {
+        const o = opts as { message?: string; fromJson?: string; wait?: boolean };
+        const client = createClient();
+
+        let message: string | Record<string, unknown>;
+        if (o.fromJson) {
+          const data = await readJsonInput(o.fromJson);
+          message = (data.message as string | Record<string, unknown>) ?? data;
+        } else if (o.message) {
+          message = o.message;
+        } else {
+          throw new DevicCliError('Provide a message with -m/--message or --from-json', 'INVALID_INPUT');
+        }
+
+        const result = await client.sendThreadMessage(threadId as string, message);
+
+        if (o.wait) {
+          return pollThread(client, threadId as string);
+        }
+        return result;
+      }, (d) => formatThread(d as AgentThreadDto)),
     );
 
   // agents threads complete <threadId>

@@ -294,6 +294,13 @@ export class DevicApiClient {
     return this.request(`/api/v1/agents/threads/${threadId}${q}`);
   }
 
+  async sendThreadMessage(threadId: string, message: string | Record<string, unknown>): Promise<AgentThreadDto> {
+    return this.request(`/api/v1/agents/threads/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+  }
+
   async updateThread(threadId: string, data: Record<string, unknown>): Promise<unknown> {
     return this.request(`/api/v1/agents/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
