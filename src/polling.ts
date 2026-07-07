@@ -95,6 +95,12 @@ export async function pollThread(
       return result;
     }
 
+    // waiting_for_response — the thread is parked waiting for an external
+    // response (email/tool); return to the caller instead of polling to timeout
+    if (result.state === AgentThreadState.WAITING_FOR_RESPONSE) {
+      return result;
+    }
+
     // handed_off — keep polling
     await sleep(interval);
     interval = Math.min(interval * o.backoffMultiplier, o.maxIntervalMs);
