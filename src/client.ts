@@ -184,12 +184,14 @@ export class DevicApiClient {
 
   async listConversations(
     assistantId: string,
-    opts?: { offset?: number; limit?: number; omitContent?: boolean },
+    opts?: { offset?: number; limit?: number; omitContent?: boolean; tenantId?: string; subtenantId?: string },
   ): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     if (opts?.limit != null) params.set('limit', String(opts.limit));
     if (opts?.omitContent) params.set('omitContent', 'true');
+    if (opts?.tenantId) params.set('tenantId', opts.tenantId);
+    if (opts?.subtenantId) params.set('subtenantId', opts.subtenantId);
     const q = params.toString();
     return this.request(`/api/v1/assistants/${assistantId}/chats${q ? `?${q}` : ''}`);
   }
@@ -274,7 +276,7 @@ export class DevicApiClient {
 
   async listThreads(
     agentId: string,
-    opts?: { offset?: number; limit?: number; state?: string; startDate?: string; endDate?: string; dateOrder?: string; tags?: string; omitContent?: boolean },
+    opts?: { offset?: number; limit?: number; state?: string; startDate?: string; endDate?: string; dateOrder?: string; tags?: string; omitContent?: boolean; tenantId?: string; subtenantId?: string },
   ): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
@@ -285,6 +287,8 @@ export class DevicApiClient {
     if (opts?.dateOrder) params.set('dateOrder', opts.dateOrder);
     if (opts?.tags) params.set('tags', opts.tags);
     if (opts?.omitContent) params.set('omitContent', 'true');
+    if (opts?.tenantId) params.set('tenantId', opts.tenantId);
+    if (opts?.subtenantId) params.set('subtenantId', opts.subtenantId);
     const q = params.toString();
     return this.request(`/api/v1/agents/${agentId}/threads${q ? `?${q}` : ''}`);
   }

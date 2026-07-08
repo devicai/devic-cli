@@ -278,14 +278,18 @@ export function registerAssistantCommands(program: Command): void {
     chats
       .command('list <identifier>')
       .description('List chat histories for an assistant')
-      .option('--omit-content', 'Exclude chat content'),
+      .option('--omit-content', 'Exclude chat content')
+      .option('--tenant-id <id>', 'Filter by tenant ID')
+      .option('--subtenant-id <id>', 'Filter by subtenant ID (end user/entity inside a tenant)'),
   ).action(
     withAction(async (identifier: unknown, opts: unknown) => {
-      const o = opts as { offset?: string; limit?: string; omitContent?: boolean };
+      const o = opts as { offset?: string; limit?: string; omitContent?: boolean; tenantId?: string; subtenantId?: string };
       const client = createClient();
       return client.listConversations(identifier as string, {
         ...parseListOpts(o),
         omitContent: o.omitContent,
+        tenantId: o.tenantId,
+        subtenantId: o.subtenantId,
       });
     }, (d) => {
       const data = d as any;

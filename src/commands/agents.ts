@@ -269,13 +269,15 @@ export function registerAgentCommands(program: Command): void {
       .option('--end-date <date>', 'End date filter')
       .option('--date-order <order>', 'Sort by date (asc|desc)')
       .option('--tags <tags>', 'Comma-separated tags')
-      .option('--omit-content', 'Exclude thread content from response (returns metadata, tasks and state only)'),
+      .option('--omit-content', 'Exclude thread content from response (returns metadata, tasks and state only)')
+      .option('--tenant-id <id>', 'Filter by tenant ID')
+      .option('--subtenant-id <id>', 'Filter by subtenant ID (end user/entity inside a tenant)'),
   ).action(
     withAction(async (agentId: unknown, opts: unknown) => {
       const o = opts as {
         offset?: string; limit?: string; state?: string;
         startDate?: string; endDate?: string; dateOrder?: string; tags?: string;
-        omitContent?: boolean;
+        omitContent?: boolean; tenantId?: string; subtenantId?: string;
       };
       const client = createClient();
       const result = await client.listThreads(agentId as string, {
@@ -286,6 +288,8 @@ export function registerAgentCommands(program: Command): void {
         dateOrder: o.dateOrder,
         tags: o.tags,
         omitContent: o.omitContent,
+        tenantId: o.tenantId,
+        subtenantId: o.subtenantId,
       });
       // Strip threadContent client-side when --omit-content is used (fallback if API doesn't support it yet)
       if (o.omitContent) {
