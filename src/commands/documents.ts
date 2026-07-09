@@ -8,6 +8,8 @@ import {
   readAndValidateJson,
   addSkipValidationOption,
   resolveProjectId,
+  readTextStdin,
+  isStdinPiped,
 } from '../helpers.js';
 import { md } from '../output.js';
 
@@ -27,6 +29,8 @@ interface DocumentDto {
   summary?: string;
   creationTimestampMs?: number;
   lastEditTimestampMs?: number;
+  /** Transient flag set by the API on update: whether a new version was created. */
+  versionCreated?: boolean;
 }
 
 function formatDocument(d: DocumentDto): string {
@@ -150,6 +154,7 @@ export function registerDocumentCommands(program: Command): void {
       .option('--name <name>', 'Document name')
       .option('--content <text>', 'Inline markdown content')
       .option('--from-file <path>', 'Read markdown content from file')
+      .option('--from-stdin', 'Read markdown content from stdin (also auto-detected when piped)')
       .option('--project <project>', 'Optional project (_id, identifier, or name)')
       .option('--parent <documentId>', 'Optional parent document ID')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
@@ -159,6 +164,7 @@ export function registerDocumentCommands(program: Command): void {
           name?: string;
           content?: string;
           fromFile?: string;
+          fromStdin?: boolean;
           project?: string;
           parent?: string;
           fromJson?: string;
@@ -172,11 +178,17 @@ export function registerDocumentCommands(program: Command): void {
         } else {
           if (!o.name) throw new Error('--name is required (or use --from-json)');
           let content = o.content;
-          if (!content && o.fromFile) {
+          if (content == null && o.fromFile) {
             content = readFileSync(o.fromFile, 'utf-8');
           }
+          if (content == null && (o.fromStdin || isStdinPiped())) {
+            const piped = await readTextStdin();
+            if (piped.length > 0) content = piped;
+          }
           if (content == null) {
-            throw new Error('Provide --content or --from-file');
+            throw new Error(
+              'Provide document content via --content, --from-file <path>, or `--from-stdin` (e.g. `cat file.md | devic documents create --name X --from-stdin`).',
+            );
           }
           data = { name: o.name, markdownContent: content };
           if (o.project) data.projectId = await resolveProjectId(client, o.project);
@@ -203,6 +215,7 @@ export function registerDocumentCommands(program: Command): void {
       .option('--summary <text>', 'Document summary')
       .option('--content <text>', 'Inline markdown content')
       .option('--from-file <path>', 'Read markdown content from file')
+      .option('--from-stdin', 'Read markdown content from stdin (also auto-detected when piped)')
       .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option('--folder <folderId>', 'Folder ID (use "null" to unset)')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
@@ -214,6 +227,7 @@ export function registerDocumentCommands(program: Command): void {
           summary?: string;
           content?: string;
           fromFile?: string;
+          fromStdin?: boolean;
           project?: string;
           folder?: string;
           fromJson?: string;
@@ -228,24 +242,53 @@ export function registerDocumentCommands(program: Command): void {
           data = {};
           if (o.name) data.name = o.name;
           if (o.summary) data.summary = o.summary;
-          let content = o.content;
-          if (!content && o.fromFile) {
-            content = readFileSync(o.fromFile, 'utf-8');
-          }
-          if (content != null) data.markdownContent = content;
           if (o.project !== undefined)
             data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
           if (o.folder !== undefined)
             data.folderId = o.folder === 'null' ? null : o.folder;
+
+          let content = o.content;
+          if (content == null && o.fromFile) {
+            content = readFileSync(o.fromFile, 'utf-8');
+          }
+          // Read markdown from stdin so `update <id> < file.md` works instead of
+          // silently discarding the redirect and sending an empty payload. We only
+          // touch stdin when the caller clearly intends content: either --from-stdin
+          // was passed, or stdin is piped AND no other field was given (avoids both
+          // clobbering a metadata-only update and blocking on an open, empty stdin).
+          const onlyContentIntended = Object.keys(data).length === 0;
+          if (content == null && (o.fromStdin || (isStdinPiped() && onlyContentIntended))) {
+            const piped = await readTextStdin();
+            // An empty read (e.g. `< /dev/null`) is treated as "no content" so it
+            // falls through to the empty-payload guard instead of wiping the doc.
+            if (piped.length > 0) content = piped;
+          }
+          if (content != null) data.markdownContent = content;
+
+          // Refuse an empty update instead of sending a no-op that the API answers
+          // with 200 + the unchanged document (which reads as success to callers).
+          if (Object.keys(data).length === 0) {
+            throw new Error(
+              'Nothing to update: provide --name, --summary, --content, --from-file <path>, --project, --folder, ' +
+                'or pipe markdown via `--from-stdin` (e.g. `cat file.md | devic documents update <id> --from-stdin`).',
+            );
+          }
         }
         return client.updateDocument(id, data);
       }, (d) => {
         const doc = d as DocumentDto;
-        return [
+        const lines = [
           md.success(`Document updated: ${md.b(doc.name ?? '-')}`),
-          '',
-          formatDocument(doc),
-        ].join('\n');
+        ];
+        // Surface whether the content change produced a new version, so callers
+        // (humans and agents) can distinguish a real update from a no-op.
+        if (doc.versionCreated === true) {
+          lines.push(md.success(`New version created: v${doc.currentVersion ?? '?'}`));
+        } else if (doc.versionCreated === false) {
+          lines.push('_No content change — document version unchanged._');
+        }
+        lines.push('', formatDocument(doc));
+        return lines.join('\n');
       }),
     );
 
