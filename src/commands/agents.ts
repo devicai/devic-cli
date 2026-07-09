@@ -358,12 +358,13 @@ export function registerAgentCommands(program: Command): void {
     .command('reject <threadId>')
     .description('Reject a thread waiting for approval')
     .option('-m, --message <text>', 'Rejection message')
+    .option('--retry', 'Re-queue the thread so the agent retries with the rejection message as guidance')
     .action(
       withAction(async (threadId: unknown, opts: unknown) => {
-        const o = opts as { message?: string };
+        const o = opts as { message?: string; retry?: boolean };
         const client = createClient();
-        return client.handleApproval(threadId as string, false, o.message);
-      }, () => md.success('Thread rejected.')),
+        return client.handleApproval(threadId as string, false, o.message, o.retry);
+      }, (_d, ...args: unknown[]) => md.success('Thread rejected.')),
     );
 
   // agents threads pause <threadId>
