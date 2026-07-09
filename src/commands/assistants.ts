@@ -13,6 +13,20 @@ import { pollChat } from '../polling.js';
 import { md } from '../output.js';
 import type { RealtimeChatHistory, ChatHistory, AssistantSpecialization } from '../types.js';
 
+// The chats search endpoint filters by creation timestamps in milliseconds
+// (createdAfter/createdBefore). Date-only end dates are pushed to the end of
+// the day so `--end-date 2026-07-09` includes chats created during that day.
+function parseDateToMs(value: string, endOfDay = false): number {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) {
+    throw new Error(`Invalid date: "${value}". Use an ISO date like 2026-07-09 or 2026-07-09T18:00:00Z`);
+  }
+  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return ms + 24 * 60 * 60 * 1000 - 1;
+  }
+  return ms;
+}
+
 function formatAssistant(a: AssistantSpecialization): string {
   const lines = [
     md.h(2, `Assistant: ${a.name}`),
@@ -343,8 +357,8 @@ export function registerAssistantCommands(program: Command): void {
       .description('Search chat histories across all assistants')
       .option('--assistant <identifier>', 'Filter by assistant')
       .option('--tags <tags>', 'Comma-separated tags filter')
-      .option('--start-date <date>', 'Start date (ISO string)')
-      .option('--end-date <date>', 'End date (ISO string)')
+      .option('--start-date <date>', 'Chats created on/after this date (ISO string, inclusive)')
+      .option('--end-date <date>', 'Chats created on/before this date (ISO string, inclusive)')
       .option('--omit-content', 'Exclude chat content')
       .option('--from-json <file>', 'Read filters from JSON file (- for stdin)'),
   ).action(
@@ -359,10 +373,10 @@ export function registerAssistantCommands(program: Command): void {
         filters = await readJsonInput(o.fromJson);
       } else {
         filters = {
-          ...(o.assistant && { assistantIdentifier: o.assistant }),
+          ...(o.assistant && { assistantSpecializationIdentifier: o.assistant }),
           ...(o.tags && { tags: o.tags.split(',').map(t => t.trim()) }),
-          ...(o.startDate && { startDate: o.startDate }),
-          ...(o.endDate && { endDate: o.endDate }),
+          ...(o.startDate && { createdAfter: parseDateToMs(o.startDate) }),
+          ...(o.endDate && { createdBefore: parseDateToMs(o.endDate, true) }),
         };
       }
       return client.searchChats(filters, { ...parseListOpts(o), omitContent: o.omitContent });
