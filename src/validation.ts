@@ -186,6 +186,7 @@ const ASSISTANT_SCHEMA: Schema = {
     'subagentsIds',
     'maxChatMessages',
     'maxToolResponseInputTokens',
+    'contextManagement',
     'isCustom',
   ],
   aliases: {
