@@ -53,14 +53,28 @@ export function createClient(): DevicApiClient {
   return new DevicApiClient({ apiKey: config.apiKey, baseUrl });
 }
 
+/** Read raw text from stdin until EOF. */
+export async function readTextStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf-8');
+}
+
+/**
+ * True when stdin is piped or redirected (e.g. `cmd < file`, `cat file | cmd`)
+ * rather than attached to an interactive terminal. Used to auto-read content
+ * from stdin when no explicit content flag is given.
+ */
+export function isStdinPiped(): boolean {
+  return process.stdin.isTTY !== true;
+}
+
 /** Read JSON from a file path or stdin (when path is "-") */
 export async function readJsonInput(path: string): Promise<Record<string, unknown>> {
   if (path === '-') {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-      chunks.push(chunk as Buffer);
-    }
-    return JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    return JSON.parse(await readTextStdin());
   }
   return JSON.parse(readFileSync(path, 'utf-8'));
 }
