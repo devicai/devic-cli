@@ -302,10 +302,12 @@ export class DevicApiClient {
     return this.request(`/api/v1/agents/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
-  async handleApproval(threadId: string, approved: boolean, message?: string): Promise<unknown> {
+  async handleApproval(threadId: string, approved: boolean, message?: string, retry?: boolean): Promise<unknown> {
+    // The API decides via `action: 'approved' | 'rejected'`; any other body
+    // shape is treated as a rejection.
     return this.request(`/api/v1/agents/threads/${threadId}/approval`, {
       method: 'POST',
-      body: JSON.stringify({ approved, message }),
+      body: JSON.stringify({ action: approved ? 'approved' : 'rejected', message, ...(retry && { retry: true }) }),
     });
   }
 
