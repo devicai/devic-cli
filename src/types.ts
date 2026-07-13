@@ -1,5 +1,37 @@
 // ── API Types (ported from devic-ui/src/api/types.ts) ──
 
+export interface SkillCatalogItem {
+  id: string;
+  type: 'document' | 'folder';
+  name: string;
+  description: string;
+  tags: string[];
+  projectId?: string;
+  readCount?: number;
+  lastReadAt?: string;
+  linkedAgentsCount?: number;
+  linkedAssistantsCount?: number;
+}
+
+export interface SkillCatalogPage {
+  items: SkillCatalogItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface SkillTreeFile {
+  path: string;
+  content: string;
+  fileType?: string;
+}
+
+export interface SkillTree {
+  skill: SkillCatalogItem;
+  files: SkillTreeFile[];
+  version: string;
+}
+
 export interface ChatFile {
   name: string;
   downloadUrl?: string;

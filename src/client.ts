@@ -15,6 +15,9 @@ import type {
   ToolServerDto,
   ToolDefinition,
   ApiError,
+  SkillCatalogItem,
+  SkillCatalogPage,
+  SkillTree,
 } from './types.js';
 import { DevicApiError } from './errors.js';
 
@@ -659,6 +662,48 @@ export class DevicApiClient {
     const q = deleteDocuments ? '?deleteDocuments=true' : '';
     return this.request(`/api/v1/document-folders/${folderId}${q}`, {
       method: 'DELETE',
+    });
+  }
+
+  // ── Skills ──
+
+  async listSkills(opts?: {
+    tags?: string[];
+    search?: string;
+    projectId?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<SkillCatalogItem[] | SkillCatalogPage> {
+    const params = new URLSearchParams();
+    if (opts?.tags?.length) params.set('tags', opts.tags.join(','));
+    if (opts?.search) params.set('search', opts.search);
+    if (opts?.projectId) params.set('projectId', opts.projectId);
+    if (opts?.page != null) params.set('page', String(opts.page));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    const q = params.toString();
+    return this.request(`/api/v1/documents/skills${q ? `?${q}` : ''}`);
+  }
+
+  async listSkillTags(projectId?: string): Promise<string[]> {
+    const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return this.request(`/api/v1/documents/skills/tags${q}`);
+  }
+
+  async getSkillTree(
+    id: string,
+    type?: 'document' | 'folder',
+  ): Promise<SkillTree> {
+    const q = type ? `?type=${type}` : '';
+    return this.request(`/api/v1/documents/skills/${id}/tree${q}`);
+  }
+
+  async installSkill(
+    id: string,
+    type?: 'document' | 'folder',
+  ): Promise<SkillTree> {
+    const q = type ? `?type=${type}` : '';
+    return this.request(`/api/v1/documents/skills/${id}/install${q}`, {
+      method: 'POST',
     });
   }
 }
