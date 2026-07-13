@@ -1,6 +1,6 @@
 {
   "name": "@devicai/cli",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "CLI for the Devic AI Platform API",
   "type": "module",
   "bin": {
