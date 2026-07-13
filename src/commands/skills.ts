@@ -6,6 +6,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join, dirname, resolve } from 'node:path';
 import { Command } from 'commander';
 import { createClient, withAction } from '../helpers.js';
@@ -15,6 +16,21 @@ import type {
   SkillCatalogPage,
   SkillTree,
 } from '../types.js';
+
+/** Reported on install so an admin can see which CLI a user installed with. */
+const cliVersion: string | undefined = (() => {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), '../../package.json'),
+        'utf-8',
+      ),
+    ) as { version?: string };
+    return pkg.version;
+  } catch {
+    return undefined;
+  }
+})();
 
 /**
  * Where each supported coding agent expects its skills, mirroring the skills.sh
@@ -88,6 +104,10 @@ interface LockEntry {
   scope: 'project' | 'global';
   installedAt: string;
   updatedAt: string;
+  // Absolute directory written per agent. Recorded so `uninstall` deletes what
+  // was actually installed: recomputing the path from the name would miss the
+  // old folder when a skill has been renamed upstream since.
+  paths?: Record<string, string>;
 }
 interface Lockfile {
   skills: Record<string, LockEntry>;
@@ -118,19 +138,27 @@ function writeLockfile(global: boolean, lock: Lockfile): void {
 /**
  * Writes a skill tree into each target agent directory, under a folder named
  * after the skill. Document-skills are written as a single SKILL.md so the
- * agent recognizes them. Returns the absolute skill directories written.
+ * agent recognizes them. Returns the absolute skill directory per agent.
+ *
+ * `previous` are the directories a former install wrote: they are removed too,
+ * so renaming a skill upstream doesn't leave the old folder behind.
  */
 function writeSkillTree(
   tree: SkillTree,
   agents: string[],
   global: boolean,
-): string[] {
+  previous?: Record<string, string>,
+): Record<string, string> {
   const folder = skillFolderName(tree.skill.name);
-  const written: string[] = [];
+  const written: Record<string, string> = {};
   for (const agent of agents) {
     const skillDir = join(agentSkillsDir(agent, global), folder);
     // Replace any previous copy so updates don't leave stale files behind.
-    if (existsSync(skillDir)) rmSync(skillDir, { recursive: true, force: true });
+    for (const dir of new Set([skillDir, previous?.[agent]].filter(Boolean))) {
+      if (existsSync(dir as string)) {
+        rmSync(dir as string, { recursive: true, force: true });
+      }
+    }
     for (const file of tree.files) {
       const relPath =
         tree.skill.type === 'document' && tree.files.length === 1
@@ -140,9 +168,20 @@ function writeSkillTree(
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, file.content ?? '');
     }
-    written.push(skillDir);
+    written[agent] = skillDir;
   }
   return written;
+}
+
+/**
+ * Where a skill lives for one agent. Prefers what the install actually wrote
+ * (lockfiles from CLI < 0.13 carry no paths, so fall back to the name).
+ */
+function skillDirFor(entry: LockEntry, agent: string): string {
+  return (
+    entry.paths?.[agent] ??
+    join(agentSkillsDir(agent, entry.scope === 'global'), skillFolderName(entry.name))
+  );
 }
 
 function normalizeCatalog(
@@ -267,23 +306,30 @@ export function registerSkillCommands(program: Command): void {
           const match = resolveSkill(catalog, ref);
 
           const agents = resolveAgents(o.agent);
-          const tree = await client.installSkill(match.id, match.type);
-          const dirs = writeSkillTree(tree, agents, !!o.global);
+          const global = !!o.global;
+          const scope = global ? 'global' : 'project';
+          const lock = readLockfile(global);
+          const prev = lock.skills[match.id];
+
+          const tree = await client.installSkill(match.id, match.type, {
+            agents,
+            scope,
+            cliVersion,
+          });
+          const paths = writeSkillTree(tree, agents, global, prev?.paths);
 
           // Record in the local lockfile so `update` knows what to refresh.
-          const global = !!o.global;
-          const lock = readLockfile(global);
           const now = new Date().toISOString();
-          const prev = lock.skills[match.id];
           lock.skills[match.id] = {
             id: match.id,
             name: tree.skill.name,
             type: match.type,
             version: tree.version,
             agents,
-            scope: global ? 'global' : 'project',
+            scope,
             installedAt: prev?.installedAt ?? now,
             updatedAt: now,
+            paths,
           };
           writeLockfile(global, lock);
 
@@ -294,8 +340,8 @@ export function registerSkillCommands(program: Command): void {
             version: tree.version,
             files: tree.files.length,
             agents,
-            scope: global ? 'global' : 'project',
-            directories: dirs,
+            scope,
+            directories: Object.values(paths),
           };
         },
         (d) => {
@@ -353,12 +399,19 @@ export function registerSkillCommands(program: Command): void {
           const updated: string[] = [];
           const upToDate: string[] = [];
           for (const entry of entries) {
-            const tree = await client.getSkillTree(entry.id, entry.type);
+            // Goes through install (not the plain tree download) so the server
+            // knows this user is still on the skill and which version they now
+            // hold — otherwise an updated copy would keep looking stale.
+            const tree = await client.installSkill(entry.id, entry.type, {
+              agents: entry.agents,
+              scope: entry.scope,
+              cliVersion,
+            });
             if (tree.version === entry.version) {
               upToDate.push(entry.name);
               continue;
             }
-            writeSkillTree(tree, entry.agents, global);
+            entry.paths = writeSkillTree(tree, entry.agents, global, entry.paths);
             entry.name = tree.skill.name;
             entry.version = tree.version;
             entry.updatedAt = new Date().toISOString();
@@ -384,6 +437,123 @@ export function registerSkillCommands(program: Command): void {
             lines.push(`_Up to date: ${r.upToDate.join(', ')}_`);
           if (!r.updated.length && !r.upToDate.length)
             lines.push('_No installed skills to update._');
+          return lines.join('\n');
+        },
+      ),
+    );
+
+  // skills uninstall <skill>
+  skills
+    .command('uninstall <skill>')
+    .alias('remove')
+    .alias('rm')
+    .description(
+      'Uninstall a skill: removes its files from your coding agents and drops it from the local registry.',
+    )
+    .option(
+      '-a, --agent <agents...>',
+      'Only uninstall from these agents (all the agents it was installed for when omitted)',
+    )
+    .option('-g, --global', 'Operate on the user-level (global) install registry')
+    .action(
+      withAction(
+        async (skill: unknown, opts: unknown) => {
+          const ref = skill as string;
+          const o = opts as { agent?: string[]; global?: boolean };
+          const global = !!o.global;
+          const scope = global ? 'global' : 'project';
+
+          const lock = readLockfile(global);
+          const entry = Object.values(lock.skills).find(
+            (e) => e.id === ref || e.name.toLowerCase() === ref.toLowerCase(),
+          );
+          if (!entry) {
+            throw new Error(
+              `Skill "${ref}" is not installed in the ${scope} scope. Run "devic skills installed${global ? ' --global' : ''}" to see what is.`,
+            );
+          }
+
+          const targets = o.agent?.length
+            ? entry.agents.filter((a) => o.agent!.includes(a))
+            : entry.agents;
+          if (!targets.length) {
+            throw new Error(
+              `${entry.name} is not installed for ${o.agent!.join(', ')}. Installed for: ${entry.agents.join(', ')}.`,
+            );
+          }
+
+          const removed: string[] = [];
+          for (const agent of targets) {
+            const dir = skillDirFor(entry, agent);
+            if (existsSync(dir)) {
+              rmSync(dir, { recursive: true, force: true });
+              removed.push(dir);
+            }
+          }
+
+          // Keep the entry alive while any other agent still holds the skill.
+          const remaining = entry.agents.filter((a) => !targets.includes(a));
+          if (remaining.length) {
+            entry.agents = remaining;
+            for (const agent of targets) delete entry.paths?.[agent];
+            entry.updatedAt = new Date().toISOString();
+          } else {
+            delete lock.skills[entry.id];
+          }
+          writeLockfile(global, lock);
+
+          // Tell the server only once the skill is fully gone from this scope —
+          // it tracks (user, skill, scope), not individual agents. Best-effort:
+          // the files are already gone, so a server hiccup must not fail the
+          // command, but the user should know their admin still sees it.
+          let recorded = true;
+          let recordError: string | undefined;
+          if (!remaining.length) {
+            try {
+              await createClient().uninstallSkill(entry.id, scope);
+            } catch (err) {
+              recorded = false;
+              recordError = err instanceof Error ? err.message : String(err);
+            }
+          }
+
+          return {
+            uninstalled: entry.name,
+            id: entry.id,
+            agents: targets,
+            remainingAgents: remaining,
+            scope,
+            directories: removed,
+            recorded,
+            recordError,
+          };
+        },
+        (d) => {
+          const r = d as {
+            uninstalled: string;
+            agents: string[];
+            remainingAgents: string[];
+            scope: string;
+            directories: string[];
+            recorded: boolean;
+            recordError?: string;
+          };
+          const lines = [
+            md.success(
+              `Uninstalled ${md.b(r.uninstalled)} from ${r.agents.join(', ')} [${r.scope}]`,
+            ),
+            '',
+            ...r.directories.map((dir) => `- ${md.code(dir)}`),
+          ];
+          if (r.remainingAgents.length) {
+            lines.push('', `_Still installed for: ${r.remainingAgents.join(', ')}_`);
+          }
+          if (!r.recorded) {
+            lines.push(
+              '',
+              `_Files removed, but Devic could not be notified (${r.recordError}). It may still list this skill as installed for you._`,
+            );
+          }
           return lines.join('\n');
         },
       ),
