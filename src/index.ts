@@ -15,6 +15,7 @@ import { registerToolServerCommands } from './commands/tool-servers.js';
 import { registerFeedbackCommands } from './commands/feedback.js';
 import { registerProjectCommands } from './commands/projects.js';
 import { registerDocumentCommands } from './commands/documents.js';
+import { registerSkillCommands } from './commands/skills.js';
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
@@ -45,6 +46,7 @@ registerToolServerCommands(program);
 registerFeedbackCommands(program);
 registerProjectCommands(program);
 registerDocumentCommands(program);
+registerSkillCommands(program);
 
 // Global error handler
 program.exitOverride();
