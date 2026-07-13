@@ -127,6 +127,9 @@ export class DevicApiClient {
       throw new DevicApiError(errorData);
     }
 
+    // 204 No Content has no body to parse (e.g. recording an uninstall).
+    if (response.status === 204) return undefined as T;
+
     const data = await response.json();
     if (isGatewayEnvelope(data)) {
       return data.data as T;
@@ -697,13 +700,35 @@ export class DevicApiClient {
     return this.request(`/api/v1/documents/skills/${id}/tree${q}`);
   }
 
+  /**
+   * Downloads a skill tree and records the install for the calling user. What
+   * we report here (agents, scope, CLI version) is what an admin sees in the
+   * skills management view.
+   */
   async installSkill(
     id: string,
     type?: 'document' | 'folder',
+    install?: {
+      agents?: string[];
+      scope?: 'project' | 'global';
+      cliVersion?: string;
+    },
   ): Promise<SkillTree> {
     const q = type ? `?type=${type}` : '';
     return this.request(`/api/v1/documents/skills/${id}/install${q}`, {
       method: 'POST',
+      body: JSON.stringify(install ?? {}),
+    });
+  }
+
+  /** Records that the skill is no longer installed on this machine. */
+  async uninstallSkill(
+    id: string,
+    scope?: 'project' | 'global',
+  ): Promise<void> {
+    const q = scope ? `?scope=${scope}` : '';
+    await this.request(`/api/v1/documents/skills/${id}/install${q}`, {
+      method: 'DELETE',
     });
   }
 }
