@@ -138,6 +138,9 @@ export interface AssistantSpecialization {
     iconUrl?: string;
     tools?: Array<{ name: string; description: string }>;
   }>;
+  availableToolsGroupsUids?: string[];
+  /** Allowlist of tool names; null means every tool of the assigned groups. */
+  enabledTools?: string[] | null;
   model?: string;
   provider?: string;
   isCustom?: boolean;

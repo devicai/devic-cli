@@ -111,6 +111,16 @@ export function registerAssistantCommands(program: Command): void {
             }
           }
         }
+
+        if (a.isCustom) {
+          if (a.enabledTools == null) {
+            lines.push('', `**Enabled tools:** all`);
+          } else if (a.enabledTools.length === 0) {
+            lines.push('', `**Enabled tools:** none`);
+          } else {
+            lines.push('', `**Enabled tools:** ${a.enabledTools.map((t) => md.code(t)).join(', ')}`);
+          }
+        }
         return lines.join('\n');
       }),
     );
@@ -159,6 +169,11 @@ export function registerAssistantCommands(program: Command): void {
       .option('--name <name>', 'Assistant name')
       .option('--description <desc>', 'Assistant description')
       .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
+      .option(
+        '--enabled-tools <names>',
+        'Comma-separated tool names to enable, replacing the current selection (empty string enables none)',
+      )
+      .option('--all-tools', 'Enable every tool of the assigned tool groups')
       .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (identifier: unknown, opts: unknown) => {
@@ -166,9 +181,14 @@ export function registerAssistantCommands(program: Command): void {
           name?: string;
           description?: string;
           project?: string;
+          enabledTools?: string;
+          allTools?: boolean;
           fromJson?: string;
           skipValidation?: boolean;
         };
+        if (o.enabledTools !== undefined && o.allTools) {
+          throw new Error('--enabled-tools and --all-tools are mutually exclusive');
+        }
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
@@ -179,6 +199,16 @@ export function registerAssistantCommands(program: Command): void {
           if (o.description) data.description = o.description;
           if (o.project !== undefined)
             data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
+        }
+        // Tool selection stays untouched unless asked for, so a partial update
+        // never widens what the assistant can call.
+        if (o.allTools) {
+          data.enabledTools = null;
+        } else if (o.enabledTools !== undefined) {
+          data.enabledTools = o.enabledTools
+            .split(',')
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
         }
         return client.updateAssistant(identifier as string, data);
       }, (d) => {
