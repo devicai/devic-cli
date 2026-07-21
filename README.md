@@ -67,6 +67,7 @@ devic assistants stop <identifier> <chatUid>
 devic assistants chats list <identifier> --limit 20
 devic assistants chats get <identifier> <chatUid>
 devic assistants chats watch <chatUid> --assistant <identifier>   # incremental monitoring
+devic assistants chats tool-response <chatUid> --assistant <identifier> --from-json responses.json
 devic assistants chats search --assistant default --tags support,urgent --start-date 2024-01-01
 ```
 

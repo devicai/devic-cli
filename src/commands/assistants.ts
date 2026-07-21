@@ -446,6 +446,42 @@ falls back to the persisted history, which is complete but no longer live.`,
       }),
     );
 
+  // assistants chats tool-response <chatUid>
+  chats
+    .command('tool-response <chatUid>')
+    .description('Answer the client-side tool calls a chat is waiting on')
+    .requiredOption('--assistant <identifier>', 'Assistant identifier the chat belongs to')
+    .requiredOption('--from-json <file>', 'Tool responses: an array, or {"responses":[…]} (- for stdin)')
+    .addHelpText(
+      'after',
+      `
+Each response is {"tool_call_id":"…","role":"tool","content":<result>}. Get the pending
+call ids from \`assistants chats watch\`.
+
+The chat's realtime key expires one hour after the last update and this endpoint rejects
+the response afterwards, even though the conversation is intact.`,
+    )
+    .action(
+      withAction(async (chatUid: unknown, opts: unknown) => {
+        const o = opts as { assistant: string; fromJson: string };
+        const client = createClient();
+        const payload = await readJsonInput(o.fromJson);
+        const responses = Array.isArray(payload)
+          ? payload
+          : (payload as { responses?: unknown[] }).responses;
+        if (!Array.isArray(responses) || responses.length === 0) {
+          throw new DevicCliError(
+            'Expected an array of tool responses, or an object with a non-empty `responses` array.',
+            'INVALID_PAYLOAD',
+          );
+        }
+        return client.sendToolResponses(o.assistant, chatUid as string, responses as any);
+      }, (d) => {
+        const r = d as { chatUid?: string };
+        return md.success(`Tool responses submitted${r.chatUid ? ` for chat ${md.code(r.chatUid)}` : ''}. The chat resumes processing.`);
+      }),
+    );
+
   // assistants chats search [filters]
   addListOptions(
     chats
