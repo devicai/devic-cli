@@ -56,6 +56,7 @@ devic assistants get <identifier>
 # Chat with an assistant (async + polling by default)
 devic assistants chat <identifier> -m "Hello"
 devic assistants chat <identifier> -m "Hello" --no-wait   # sync mode
+devic assistants chat <identifier> -m "Hello" --detach    # return the chatUid, don't block
 devic assistants chat <identifier> -m "Hello" --chat-uid <uid>  # continue conversation
 devic assistants chat <identifier> -m "Hello" --provider anthropic --model claude-3-opus
 

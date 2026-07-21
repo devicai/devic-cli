@@ -247,13 +247,14 @@ export function registerAssistantCommands(program: Command): void {
     .option('--tags <tags>', 'Comma-separated tags')
     .option('--wait', 'Use async mode and poll for result (default)', true)
     .option('--no-wait', 'Use synchronous mode (blocks until response)')
+    .option('--detach', 'Send in async mode and return the chatUid immediately, without polling')
     .option('--from-json <file>', 'Read full ProcessMessageDto from JSON file (- for stdin)')
     .action(
       withAction(async (identifier: unknown, opts: unknown) => {
         const id = identifier as string;
         const o = opts as {
           message: string; chatUid?: string; provider?: string; model?: string;
-          tags?: string; wait: boolean; fromJson?: string;
+          tags?: string; wait: boolean; detach?: boolean; fromJson?: string;
         };
         const client = createClient();
 
@@ -271,15 +272,25 @@ export function registerAssistantCommands(program: Command): void {
           };
         }
 
-        if (!o.wait) {
+        if (!o.wait && !o.detach) {
           return client.sendMessage(id, dto as any);
         }
 
         const asyncRes = await client.sendMessageAsync(id, dto as any);
-        const result = await pollChat(client, id, asyncRes.chatUid);
-        return result;
+        // `--detach` exists for callers that cannot block: polling here would
+        // hold the process for up to five minutes, and a sandboxed command dies
+        // long before that. Follow up with `assistants chats watch`.
+        if (o.detach) return asyncRes;
+        return pollChat(client, id, asyncRes.chatUid);
       }, (d) => {
-        const r = d as RealtimeChatHistory;
+        const r = d as RealtimeChatHistory & { chatUid?: string };
+        if (r.chatUid && !r.chatHistory) {
+          return [
+            md.success(`Message sent. Chat ${md.code(r.chatUid)} is processing.`),
+            '',
+            `Watch it with: ${md.code(`devic assistants chats watch ${r.chatUid} --assistant <identifier>`)}`,
+          ].join('\n');
+        }
         if (!r.chatHistory && Array.isArray(d)) {
           // Sync mode returns ChatMessage[]
           return [
