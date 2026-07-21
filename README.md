@@ -147,6 +147,74 @@ devic feedback submit-thread <threadId> --message-id <msgId> --positive
 devic feedback list-thread <threadId>
 ```
 
+### Knowledge documents
+
+```bash
+devic documents list --limit 100 --search "onboarding"
+devic documents get <documentId>
+
+# create (content via --content, --from-file or stdin)
+devic documents create --name "Sales playbook" --from-file ./playbook.md --folder <folderId>
+cat notes.md | devic documents create --name "Notes" --from-stdin
+
+# update: changing the content creates a new version
+devic documents update <documentId> --from-file ./playbook.md
+devic documents versions list <documentId>
+devic documents versions revert <documentId> 3
+
+# make it reachable by an agent or assistant (it also needs a knowledge tool group)
+devic documents attach <documentId> --target-type agent --target-id <agentId>
+devic documents usage <documentId>          # who reaches it, and how (via document/folder/skill)
+
+# folders
+devic documents folders create --name "Sales" --project <project>
+devic documents folders delete <folderId> --delete-documents
+```
+
+Only markdown can be created through the API; uploading a PDF/DOCX is done from
+the Devic UI.
+
+### Skills
+
+A skill is a knowledge document (or a folder with a `SKILL.md`) that the model
+loads on demand. `create` writes both the folder and its manifest:
+
+```bash
+devic skills create "Incident triage" \
+  --description "How to triage a production incident." --tags 🚨
+devic skills create "Release drill" --from-file ./SKILL.md   # replaces the generated stub
+
+devic skills list --limit 100 --tag 🚨
+devic skills get "Incident triage"
+devic skills tree "Incident triage" --out ./downloaded-skill
+
+# install into your coding agents (claude-code, codex, cursor, opencode, cline)
+devic skills install "Incident triage"
+devic skills installed
+devic skills update
+devic skills uninstall "Incident triage"
+```
+
+Attaching a skill to an agent or assistant is a payload field, `knowledgeSkills`:
+
+```bash
+echo '{"knowledgeSkills":[{"id":"<folderId>","type":"folder"}]}' > skills.json
+devic assistants update <identifier> --from-json skills.json
+```
+
+`type` must match the skill's shape (`document` or `folder`) — the API rejects a
+mismatch with `INVALID_SKILLS`. Note `availableSkillIds` is a **different**,
+legacy feature; putting a catalog skill id there does nothing.
+
+### Projects
+
+```bash
+devic projects list
+devic projects create --name "Support" --identifier support
+devic projects threads <project>
+devic projects costs daily <project> --start-date 2026-07-01
+```
+
 ## JSON Input
 
 For complex payloads, use `--from-json` with a file path or `-` for stdin:
@@ -161,6 +229,12 @@ echo '{"name":"My Agent","description":"Does things"}' | devic agents create --f
 # Pipe from another command
 cat config.json | devic tool-servers create --from-json -
 ```
+
+Payloads are checked client-side against a list of known **top-level** fields and
+rejected with `INVALID_PAYLOAD` if something is unrecognised — including fields
+newer than the CLI itself. Pass `--skip-validation` for those. Anything nested
+(e.g. inside an agent's `assistantSpecialization`) is never checked, so it never
+needs the flag.
 
 ## Polling & Streaming
 

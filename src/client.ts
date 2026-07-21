@@ -571,6 +571,11 @@ export class DevicApiClient {
     markdownContent: string;
     projectId?: string;
     parentDocumentId?: string;
+    /** Files the document straight into a folder — no follow-up update needed. */
+    folderId?: string;
+    /** Flags the document as a skill (its SKILL.md frontmatter names it). */
+    isSkill?: boolean;
+    tags?: string[];
   }): Promise<unknown> {
     return this.request(`/api/v1/documents`, {
       method: 'POST',
@@ -685,6 +690,24 @@ export class DevicApiClient {
     if (opts?.limit != null) params.set('limit', String(opts.limit));
     const q = params.toString();
     return this.request(`/api/v1/documents/skills${q ? `?${q}` : ''}`);
+  }
+
+  /**
+   * Creates a folder-skill: the folder plus its SKILL.md manifest, with the
+   * name/description frontmatter already written. One call instead of the
+   * folder + manifest + naming-convention dance.
+   */
+  async scaffoldSkill(data: {
+    name: string;
+    description?: string;
+    projectId?: string;
+    parentFolderId?: string;
+    tags?: string[];
+  }): Promise<{ folder: Record<string, unknown>; skillDoc: Record<string, unknown> }> {
+    return this.request(`/api/v1/documents/skills/scaffold`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async listSkillTags(projectId?: string): Promise<string[]> {

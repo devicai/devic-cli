@@ -184,6 +184,33 @@ function skillDirFor(entry: LockEntry, agent: string): string {
   );
 }
 
+/**
+ * Whole catalog, page by page.
+ *
+ * `skills install`/`update` resolve a skill by name, so a truncated fetch shows
+ * up as "Skill not found" for anything past the first page. The API caps `limit`
+ * at 200 and returns `{items,total,page,limit}`, so keep asking until we have
+ * `total` (older deployments answered with a bare array — `normalizeCatalog`
+ * absorbs that, and the loop exits on the first page because there is no
+ * `total` to chase).
+ */
+async function fetchWholeCatalog(
+  client: ReturnType<typeof createClient>,
+): Promise<SkillCatalogItem[]> {
+  const PAGE_SIZE = 200;
+  const all: SkillCatalogItem[] = [];
+  for (let page = 1; ; page++) {
+    const res = (await client.listSkills({ page, limit: PAGE_SIZE })) as
+      | SkillCatalogPage
+      | SkillCatalogItem[];
+    const items = normalizeCatalog(res as SkillCatalogPage);
+    all.push(...items);
+    const total = Array.isArray(res) ? items.length : res.total;
+    if (items.length === 0 || all.length >= (total ?? all.length)) break;
+  }
+  return all;
+}
+
 function normalizeCatalog(
   res: SkillCatalogItem[] | SkillCatalogPage,
 ): SkillCatalogItem[] {
@@ -203,6 +230,8 @@ export function registerSkillCommands(program: Command): void {
     .option('--tag <tag...>', 'Filter by tag (repeatable)')
     .option('--search <text>', 'Free-text search over name/description')
     .option('--project <projectId>', 'Filter by project id')
+    .option('--limit <n>', 'Page size (max 200, default 100)')
+    .option('--page <n>', '1-based page number')
     .action(
       withAction(
         async (opts: unknown) => {
@@ -210,13 +239,18 @@ export function registerSkillCommands(program: Command): void {
             tag?: string[];
             search?: string;
             project?: string;
+            limit?: string;
+            page?: string;
           };
           const client = createClient();
           const res = (await client.listSkills({
             tags: o.tag,
             search: o.search,
             projectId: o.project,
-            limit: 100,
+            // A page size is always sent: it is what makes the API return the
+            // usage stats (linked agents/assistants, installs) shown below.
+            limit: o.limit ? Math.max(1, Math.min(200, Number(o.limit) || 100)) : 100,
+            page: o.page ? Math.max(1, Number(o.page) || 1) : undefined,
           })) as SkillCatalogPage | SkillCatalogItem[];
           return res;
         },
@@ -300,9 +334,7 @@ export function registerSkillCommands(program: Command): void {
           const client = createClient();
 
           // Resolve the skill by id or (case-insensitive) name.
-          const catalog = normalizeCatalog(
-            (await client.listSkills({})) as SkillCatalogItem[],
-          );
+          const catalog = await fetchWholeCatalog(client);
           const match = resolveSkill(catalog, ref);
 
           const agents = resolveAgents(o.agent);
@@ -555,6 +587,139 @@ export function registerSkillCommands(program: Command): void {
             );
           }
           return lines.join('\n');
+        },
+      ),
+    );
+
+  // skills create <name>
+  skills
+    .command('create <name>')
+    .description(
+      'Create a folder-skill: the folder plus its SKILL.md manifest, with the name/description frontmatter already written.',
+    )
+    .option('-d, --description <text>', 'One-line description. Phrase it as a trigger ("How to … when …") — it is what the model sees before deciding to load the skill.')
+    .option('--tags <tags...>', 'Category tags')
+    .option('--project <projectId>', 'Scope the skill to a project')
+    .option('--parent <folderId>', 'Create it inside an existing folder')
+    .option('--from-file <path>', 'Replace the generated manifest with this markdown file')
+    .action(
+      withAction(
+        async (name: unknown, opts: unknown) => {
+          const o = opts as {
+            description?: string;
+            tags?: string[];
+            project?: string;
+            parent?: string;
+            fromFile?: string;
+          };
+          const client = createClient();
+          const created = await client.scaffoldSkill({
+            name: name as string,
+            description: o.description,
+            tags: o.tags,
+            projectId: o.project,
+            parentFolderId: o.parent,
+          });
+
+          // The scaffold writes a stub manifest; --from-file replaces its body in
+          // place so the caller ends up with one skill, not a skill plus a
+          // stray document.
+          if (o.fromFile) {
+            const skillDocId = String(
+              (created.skillDoc as { _id?: unknown })?._id ?? '',
+            );
+            if (!skillDocId) {
+              throw new Error(
+                'The skill was created but its SKILL.md id was not returned, so --from-file could not be applied. Update the manifest manually.',
+              );
+            }
+            await client.updateDocument(skillDocId, {
+              markdownContent: readFileSync(o.fromFile, 'utf-8'),
+            });
+          }
+          return created;
+        },
+        (d) => {
+          const r = d as { folder?: any; skillDoc?: any };
+          return [
+            md.success(`Skill created: ${md.b(r.folder?.name ?? '-')}`),
+            '',
+            `- id: ${md.code(String(r.folder?._id ?? '-'))} (use it with \`type: "folder"\`)`,
+            `- manifest: ${md.code(String(r.skillDoc?._id ?? '-'))}`,
+            '',
+            '_Attach it with `knowledgeSkills`, and grant the Advanced knowledge search tool group so the model can load it on demand._',
+          ].join('\n');
+        },
+      ),
+    );
+
+  // skills get <skill>
+  skills
+    .command('get <skill>')
+    .description('Show one skill from the catalog (by id or name)')
+    .action(
+      withAction(
+        async (skill: unknown) => {
+          const client = createClient();
+          const catalog = await fetchWholeCatalog(client);
+          return resolveSkill(catalog, skill as string);
+        },
+        (d) => {
+          const s = d as SkillCatalogItem;
+          const lines = [
+            md.h(2, s.name),
+            '',
+            s.description || '_No description._',
+            '',
+            `- id: ${md.code(s.id)}`,
+            `- type: ${s.type}`,
+            `- tags: ${(s.tags || []).join(', ') || '-'}`,
+            `- linked: ${s.linkedAgentsCount ?? 0} agent(s), ${s.linkedAssistantsCount ?? 0} assistant(s)`,
+            `- reads: ${s.readCount ?? 0}`,
+          ];
+          if ((s as any).github) {
+            const g = (s as any).github;
+            lines.push(
+              `- github: ${g.owner}/${g.repo}/${g.path} @ ${g.ref} (read-only, cached 5 min)`,
+            );
+          }
+          return lines.join('\n');
+        },
+      ),
+    );
+
+  // skills tree <skill>
+  skills
+    .command('tree <skill>')
+    .description('Show the files of a skill (what an install would download), without recording an install')
+    .option('--out <dir>', 'Also write the files to this directory')
+    .action(
+      withAction(
+        async (skill: unknown, opts: unknown) => {
+          const o = opts as { out?: string };
+          const client = createClient();
+          const catalog = await fetchWholeCatalog(client);
+          const match = resolveSkill(catalog, skill as string);
+          const tree = await client.getSkillTree(match.id, match.type);
+
+          if (o.out) {
+            for (const file of tree.files) {
+              const target = join(o.out, file.path);
+              mkdirSync(dirname(target), { recursive: true });
+              writeFileSync(target, file.content, 'utf-8');
+            }
+          }
+          return tree;
+        },
+        (d) => {
+          const t = d as SkillTree;
+          return [
+            md.h(2, `${t.skill.name} (${t.skill.type})`),
+            '',
+            `version: ${md.code(t.version)}`,
+            '',
+            ...t.files.map((f) => `- ${md.code(f.path)} (${f.content.length} chars)`),
+          ].join('\n');
         },
       ),
     );
