@@ -377,10 +377,15 @@ export class DevicApiClient {
 
   // ── Tool Servers ──
 
-  async listToolServers(opts?: { offset?: number; limit?: number }): Promise<unknown> {
+  async listToolServers(opts?: {
+    offset?: number;
+    limit?: number;
+    projectId?: string;
+  }): Promise<unknown> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.projectId) params.set('projectId', opts.projectId);
     const q = params.toString();
     return this.request(`/api/v1/tool-servers${q ? `?${q}` : ''}`);
   }
@@ -420,8 +425,20 @@ export class DevicApiClient {
 
   // ── Tools ──
 
-  async listTools(toolServerId: string): Promise<unknown> {
-    return this.request(`/api/v1/tool-servers/${toolServerId}/tools`);
+  async listTools(
+    toolServerId: string,
+    opts?: { available?: boolean; limit?: number; cursor?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    // Only sent when asked for: an app integration answers with its whole
+    // catalogue instead of the tools the server exposes.
+    if (opts?.available) params.set('available', 'true');
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const q = params.toString();
+    return this.request(
+      `/api/v1/tool-servers/${toolServerId}/tools${q ? `?${q}` : ''}`,
+    );
   }
 
   async getTool(toolServerId: string, toolName: string): Promise<ToolDefinition> {

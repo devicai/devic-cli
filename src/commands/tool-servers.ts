@@ -7,6 +7,7 @@ import {
   readJsonInput,
   readAndValidateJson,
   addSkipValidationOption,
+  resolveProjectId,
 } from '../helpers.js';
 import { md } from '../output.js';
 import { DevicCliError } from '../errors.js';
@@ -52,6 +53,23 @@ async function renameToolInDefinition(
   return { oldName, newName };
 }
 
+/**
+ * What kind of server this is. Falls back to the old inference for a backend
+ * that predates the `type` field, so an older deployment still reads sensibly.
+ */
+function serverType(ts: ToolServerDto): string {
+  return ts.type ?? (ts.mcpType ? 'mcp' : 'http');
+}
+
+/** Where the server's tools come from: a URL, or the app it is connected to. */
+function serverTarget(ts: ToolServerDto): string {
+  if (ts.integration) {
+    const { app, connected } = ts.integration;
+    return `${app}${connected ? '' : ' (not connected)'}`;
+  }
+  return ts.url || ts.identifier || '-';
+}
+
 function formatToolServer(ts: ToolServerDto): string {
   const lines = [
     md.h(2, `Tool Server: ${ts.name}`),
@@ -60,10 +78,26 @@ function formatToolServer(ts: ToolServerDto): string {
     `**Name:** ${ts.name}`,
   ];
   if (ts.description) lines.push(`**Description:** ${ts.description}`);
+  lines.push(`**Type:** ${serverType(ts)}`);
   if (ts.url) lines.push(`**URL:** ${ts.url}`);
   if (ts.identifier) lines.push(`**Identifier:** ${md.code(ts.identifier)}`);
   if (ts.enabled != null) lines.push(`**Enabled:** ${ts.enabled ? 'Yes' : 'No'}`);
   if (ts.mcpType) lines.push(`**MCP Server:** Yes`);
+
+  if (ts.integration) {
+    const { app, apps, connected, enabledToolCount } = ts.integration;
+    lines.push(
+      '',
+      md.h(3, 'Integration'),
+      `**App:** ${md.code(app)}${apps?.length > 1 ? ` (+ ${apps.slice(1).join(', ')})` : ''}`,
+      `**Connected:** ${connected ? 'Yes' : 'No — connect an account for this app before its tools can run'}`,
+      `**Exposed tools:** ${enabledToolCount ?? 'all of the app\'s'}`,
+      '',
+      `_Tools come from the connected app, not from a stored definition. ` +
+        `Run ${md.code(`devic tool-servers tools list ${ts._id ?? '<id>'} --available`)} ` +
+        `to browse everything the app offers._`,
+    );
+  }
 
   if (ts.toolServerDefinition?.toolDefinitions?.length) {
     lines.push('', md.h(3, `Tools (${ts.toolServerDefinition.toolDefinitions.length})`));
@@ -98,12 +132,24 @@ export function registerToolServerCommands(program: Command): void {
 
   // tool-servers list
   addListOptions(
-    ts.command('list').description('List all tool servers'),
+    ts
+      .command('list')
+      .description('List all tool servers')
+      .option(
+        '--project <project>',
+        'Filter tool servers by project (_id, identifier, or name)',
+      ),
   ).action(
     withAction(async (opts: unknown) => {
-      const o = opts as { offset?: string; limit?: string };
+      const o = opts as { offset?: string; limit?: string; project?: string };
       const client = createClient();
-      return client.listToolServers(parseListOpts(o));
+      const projectId = o.project
+        ? await resolveProjectId(client, o.project)
+        : undefined;
+      return client.listToolServers({
+        ...parseListOpts(o),
+        ...(projectId ? { projectId } : {}),
+      });
     }, (d) => {
       const data = d as any;
       const items = data.toolServers ?? (Array.isArray(data) ? data : []);
@@ -114,10 +160,12 @@ export function registerToolServerCommands(program: Command): void {
         md.table(items.map((s: any) => ({
           id: s._id,
           name: s.name,
-          url: s.url || '-',
-          identifier: s.identifier || '-',
+          type: serverType(s),
+          // One column for the three kinds: an integration has no URL, and a
+          // row of dashes said nothing about what it was.
+          target: serverTarget(s),
           enabled: s.enabled ?? true,
-        })), { columns: ['id', 'name', 'url', 'identifier', 'enabled'] }),
+        })), { columns: ['id', 'name', 'type', 'target', 'enabled'] }),
       ];
       if (data.total != null) lines.push(md.pagination(data));
       return lines.join('\n');
@@ -277,26 +325,56 @@ export function registerToolServerCommands(program: Command): void {
   // tool-servers tools list <toolServerId>
   tools
     .command('list <toolServerId>')
-    .description('List tools in a tool server')
+    .description(
+      'List the tools a server exposes. On an app integration, --available ' +
+        'browses everything the connected app offers instead.',
+    )
+    .option(
+      '--available',
+      'App integrations only: list the whole catalogue of the connected app, marking which tools the server exposes',
+    )
+    .option('--limit <n>', 'Page size when browsing a catalogue (--available)')
+    .option('--cursor <cursor>', 'Page token from a previous response')
     .action(
-      withAction(async (toolServerId: unknown) => {
+      withAction(async (toolServerId: unknown, opts: unknown) => {
+        const o = opts as { available?: boolean; limit?: string; cursor?: string };
         const client = createClient();
-        return client.listTools(toolServerId as string);
+        return client.listTools(toolServerId as string, {
+          available: o.available,
+          limit: o.limit ? Number(o.limit) : undefined,
+          cursor: o.cursor,
+        });
       }, (d) => {
         const data = d as any;
         const items = data.tools ?? (Array.isArray(data) ? data : []);
         if (items.length === 0) return '_No tools found._';
+        // Only integrations carry `enabled`; for an HTTP or MCP server the
+        // endpoint columns are what matter.
+        const isIntegration = items.some((t: any) => t.enabled !== undefined);
         const lines = [
           md.h(2, 'Tools'),
           '',
-          md.table(items.map((t: any) => ({
-            name: t.function?.name ?? '-',
-            description: (t.function?.description ?? '-').slice(0, 60),
-            method: t.method || 'GET',
-            endpoint: t.endpoint || '-',
-          })), { columns: ['name', 'description', 'method', 'endpoint'] }),
+          isIntegration
+            ? md.table(items.map((t: any) => ({
+                name: t.function?.name ?? '-',
+                enabled: t.enabled ? 'yes' : 'no',
+                description: (t.function?.description ?? '-').slice(0, 70),
+              })), { columns: ['name', 'enabled', 'description'] })
+            : md.table(items.map((t: any) => ({
+                name: t.function?.name ?? '-',
+                description: (t.function?.description ?? '-').slice(0, 60),
+                method: t.method || 'GET',
+                endpoint: t.endpoint || '-',
+              })), { columns: ['name', 'description', 'method', 'endpoint'] }),
         ];
         if (data.total != null) lines.push('', md.info(`${data.total} tool(s)`));
+        if (data.nextCursor) {
+          lines.push(
+            md.info(
+              `More available — pass ${md.code(`--cursor ${data.nextCursor}`)} for the next page.`,
+            ),
+          );
+        }
         return lines.join('\n');
       }),
     );
