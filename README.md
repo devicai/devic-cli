@@ -56,6 +56,7 @@ devic assistants get <identifier>
 # Chat with an assistant (async + polling by default)
 devic assistants chat <identifier> -m "Hello"
 devic assistants chat <identifier> -m "Hello" --no-wait   # sync mode
+devic assistants chat <identifier> -m "Hello" --detach    # return the chatUid, don't block
 devic assistants chat <identifier> -m "Hello" --chat-uid <uid>  # continue conversation
 devic assistants chat <identifier> -m "Hello" --provider anthropic --model claude-3-opus
 
@@ -65,6 +66,8 @@ devic assistants stop <identifier> <chatUid>
 # Chat histories
 devic assistants chats list <identifier> --limit 20
 devic assistants chats get <identifier> <chatUid>
+devic assistants chats watch <chatUid> --assistant <identifier>   # incremental monitoring
+devic assistants chats tool-response <chatUid> --assistant <identifier> --from-json responses.json
 devic assistants chats search --assistant default --tags support,urgent --start-date 2024-01-01
 ```
 
@@ -84,6 +87,11 @@ devic agents threads create <agentId> -m "Analyze Q4 sales"
 devic agents threads create <agentId> -m "Analyze Q4 sales" --wait  # poll until done
 devic agents threads list <agentId> --state COMPLETED --limit 20
 devic agents threads get <threadId> --with-tasks
+
+# Watch an execution (short window, reports only what changed since last check)
+devic agents threads watch <threadId>
+devic agents threads watch <threadId> --wait 5 --window 35 --interval 3
+devic agents threads watch <threadId> --until approval   # return only on approval/terminal
 
 # Thread control
 devic agents threads approve <threadId> -m "Proceed"
@@ -173,6 +181,57 @@ devic agents threads create <agentId> -m "Run analysis" --wait
 Polling parameters:
 - **Chats**: 1s initial, 1.5x backoff, 10s max interval, 5min timeout
 - **Threads**: 2s initial, 1.5x backoff, 15s max interval, 10min timeout
+
+## Watching an execution
+
+`--wait` blocks until the run finishes, which does not fit an agent driving the CLI from a
+sandbox (commands there are killed at ~45s). `agents threads watch` is the incremental
+alternative: it watches for a short window, reports **only what changed since the previous
+call**, and says whether watching further is worth it.
+
+```bash
+devic agents threads watch <threadId> --wait 5 --window 35 --interval 3
+devic assistants chats watch <chatUid> --assistant <identifier> --wait 5 --window 35
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--wait <s>` | `0` | sleep before looking, so consecutive checks are spaced without an external `sleep` |
+| `--window <s>` | `35` | how long to keep watching |
+| `--interval <s>` | `3` | how often to re-check |
+| `--since <cursor>` | — | only report activity after a cursor returned by an earlier watch |
+| `--until <event>` | `change` | `change`, `approval` or `terminal` |
+| `--with-tasks` | off | include the external tasks API (one extra HTTP call per check) |
+
+`--wait` + `--window` must be **≤ 40s**.
+
+State between calls lives in `~/.cache/devic/watch/<threadId>.json`: it holds the previous
+fingerprint (state + message count + task signature), so a thread that sits in `processing`
+while still producing messages is not mistaken for a stuck one — and vice versa. Records are
+deleted when the thread finishes and pruned after 24h.
+
+Exit codes drive the decision:
+
+| Code | `reason` | What it means |
+|---|---|---|
+| 0 | `terminal` | finished (`completed` / `failed` / `terminated` / `approval_rejected`) |
+| 10 | `approval_required` | a human has to approve or reject; nothing moves until then |
+| 11 | `waiting_for_response`, `paused`, `limit_exceeded` | blocked on something external |
+| 12 | `progress`, `window_elapsed` | still running — call again with the returned cursor |
+| 13 | `stalled` | nothing changed across several consecutive checks |
+| 1 | — | error (thread not found, bad budget, auth) |
+
+For chats the same rules apply over the realtime view, with two differences worth knowing:
+the assistant can block on a **client-side tool response** (exit 10 — only whoever declared the
+tool can answer, over `POST /chats/:chatUid/tool-response`), and the realtime key **expires one
+hour after the last update**. Once it does, the API rebuilds the response from the persisted
+history and labels it `completed` whatever actually happened; `watch` flags that case rather
+than reporting a synthetic success.
+
+The `advice` field (`continue`, `slow_down`, `human_action_required`, `stop_polling`) and
+`suggestedNext` carry the recommended cadence, and `diagnostics` explains *why* a thread is
+not moving — disabled agent, agent at its concurrency limit, queue cron delay, pending
+approval, scheduled resume time, no hot watchdog for wedged threads.
 
 ## Configuration
 

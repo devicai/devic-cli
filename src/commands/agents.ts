@@ -10,7 +10,11 @@ import {
   resolveProjectId,
 } from '../helpers.js';
 import { pollThread } from '../polling.js';
-import { md } from '../output.js';
+import { md, output } from '../output.js';
+import { DevicCliError } from '../errors.js';
+import { MAX_BUDGET_SECONDS, watchThread } from '../watch/threadWatch.js';
+import type { ThreadWatchResult } from '../watch/threadWatch.js';
+import { renderThreadWatch } from '../watch/render.js';
 import type { AgentDto, AgentThreadDto } from '../types.js';
 
 function formatAgent(a: AgentDto): string {
@@ -65,6 +69,41 @@ function formatThread(t: AgentThreadDto): string {
     lines.push('', md.hr(), '', md.conversation(t.threadContent));
   }
   return lines.join('\n');
+}
+
+/**
+ * Approving a thread is a race: if a human already answered from the UI, the API
+ * replies with an opaque 400. Reading the state first turns that into something
+ * actionable.
+ */
+async function assertWaitingForApproval(
+  client: ReturnType<typeof createClient>,
+  threadId: string,
+): Promise<void> {
+  const thread = await client.getThread(threadId);
+  if (thread.state !== 'paused_for_approval') {
+    throw new DevicCliError(
+      `Thread is in state \`${thread.state}\`, not \`paused_for_approval\` — there is nothing to decide. ` +
+        'Someone may have already answered from the UI.',
+      'NOT_WAITING_FOR_APPROVAL',
+    );
+  }
+}
+
+/**
+ * The approval endpoint echoes the whole thread with the agent document inlined,
+ * which includes its `internalAPIKey`. Never print that: return the outcome only.
+ */
+function summarizeApproval(result: unknown, action: 'approved' | 'rejected'): Record<string, unknown> {
+  const thread = result as Partial<AgentThreadDto> & { agentId?: unknown };
+  const agentId = thread?.agentId;
+  return {
+    threadId: thread?._id,
+    agentId: typeof agentId === 'string' ? agentId : (agentId as { _id?: string } | undefined)?._id,
+    action,
+    state: thread?.state,
+    messages: thread?.threadContent?.length,
+  };
 }
 
 export function registerAgentCommands(program: Command): void {
@@ -340,31 +379,83 @@ export function registerAgentCommands(program: Command): void {
       }, (d) => formatThread(d as AgentThreadDto)),
     );
 
+  // agents threads watch <threadId>
+  threads
+    .command('watch <threadId>')
+    .description('Watch a thread for a short window and report only what changed since the last check')
+    .option('--wait <seconds>', 'Wait before looking (spaces out consecutive checks)', '0')
+    .option('--window <seconds>', 'How long to keep watching', '35')
+    .option('--interval <seconds>', 'How often to re-check the thread', '3')
+    .option('--since <cursor>', 'Only report activity after this cursor (from a previous watch)')
+    .option('--until <event>', 'Return only on this event: change | approval | terminal', 'change')
+    .option('--with-tasks', 'Include the external tasks API (extra HTTP call per check)')
+    .addHelpText(
+      'after',
+      `
+Exit codes:
+  0   finished (completed/failed/terminated/rejected)
+  10  waiting for a human approval decision
+  11  waiting on something external (external channel, paused, usage limit)
+  12  still running — call again with the returned cursor
+  13  no progress across several consecutive checks
+
+\`--wait\` + \`--window\` must stay at or below ${MAX_BUDGET_SECONDS}s: sandboxed commands are killed at ~45s.`,
+    )
+    .action(
+      withAction(async (threadId: unknown, opts: unknown) => {
+        const o = opts as {
+          wait: string; window: string; interval: string;
+          since?: string; until?: string; withTasks?: boolean;
+        };
+        const until = o.until as 'change' | 'approval' | 'terminal';
+        if (!['change', 'approval', 'terminal'].includes(until)) {
+          throw new DevicCliError(`--until must be one of: change, approval, terminal`, 'INVALID_UNTIL');
+        }
+        const client = createClient();
+        const result = await watchThread(client, threadId as string, {
+          wait: Number(o.wait),
+          window: Number(o.window),
+          interval: Number(o.interval),
+          since: o.since,
+          until,
+          withTasks: o.withTasks,
+        });
+        // The exit code is the signal the copilot branches on, so it has to be
+        // set here: `withAction` only owns the failure paths.
+        output(result, d => renderThreadWatch(d as ThreadWatchResult));
+        process.exit(result.exitCode);
+      }),
+    );
+
   // agents threads approve <threadId>
   threads
     .command('approve <threadId>')
     .description('Approve a thread waiting for approval')
-    .option('-m, --message <text>', 'Approval message')
+    .requiredOption('-m, --message <text>', 'Message shown to the agent as the user response')
     .action(
       withAction(async (threadId: unknown, opts: unknown) => {
-        const o = opts as { message?: string };
+        const o = opts as { message: string };
         const client = createClient();
-        return client.handleApproval(threadId as string, true, o.message);
-      }, () => md.success('Thread approved.')),
+        await assertWaitingForApproval(client, threadId as string);
+        const result = await client.handleApproval(threadId as string, true, o.message);
+        return summarizeApproval(result, 'approved');
+      }, (d) => md.success(`Thread approved (now ${md.code((d as { state?: string }).state ?? '?')}).`)),
     );
 
   // agents threads reject <threadId>
   threads
     .command('reject <threadId>')
     .description('Reject a thread waiting for approval')
-    .option('-m, --message <text>', 'Rejection message')
+    .requiredOption('-m, --message <text>', 'Message shown to the agent explaining the rejection')
     .option('--retry', 'Re-queue the thread so the agent retries with the rejection message as guidance')
     .action(
       withAction(async (threadId: unknown, opts: unknown) => {
-        const o = opts as { message?: string; retry?: boolean };
+        const o = opts as { message: string; retry?: boolean };
         const client = createClient();
-        return client.handleApproval(threadId as string, false, o.message, o.retry);
-      }, (_d, ...args: unknown[]) => md.success('Thread rejected.')),
+        await assertWaitingForApproval(client, threadId as string);
+        const result = await client.handleApproval(threadId as string, false, o.message, o.retry);
+        return summarizeApproval(result, 'rejected');
+      }, (d) => md.success(`Thread rejected (now ${md.code((d as { state?: string }).state ?? '?')}).`)),
     );
 
   // agents threads pause <threadId>

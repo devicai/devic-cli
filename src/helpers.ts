@@ -16,7 +16,11 @@ export function createClient(): DevicApiClient {
   const config = loadConfig();
   const baseUrl = config.baseUrl ?? 'https://api.devic.ai';
 
-  if (config.oauth?.accessToken) {
+  // An explicit `DEVIC_API_KEY` wins over a stored OAuth session, as documented:
+  // otherwise scripts that export a key silently keep using the browser login.
+  const envApiKey = process.env['DEVIC_API_KEY'];
+
+  if (config.oauth?.accessToken && !envApiKey) {
     return new DevicApiClient({
       apiKey: config.oauth.accessToken,
       baseUrl,

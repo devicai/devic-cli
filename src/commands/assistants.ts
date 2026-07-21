@@ -10,7 +10,12 @@ import {
   resolveProjectId,
 } from '../helpers.js';
 import { pollChat } from '../polling.js';
-import { md } from '../output.js';
+import { md, output } from '../output.js';
+import { DevicCliError } from '../errors.js';
+import { MAX_BUDGET_SECONDS } from '../watch/threadWatch.js';
+import { watchChat } from '../watch/chatWatch.js';
+import type { ChatWatchResult } from '../watch/chatWatch.js';
+import { renderChatWatch } from '../watch/render.js';
 import type { RealtimeChatHistory, ChatHistory, AssistantSpecialization } from '../types.js';
 
 // The chats search endpoint filters by creation timestamps in milliseconds
@@ -242,13 +247,14 @@ export function registerAssistantCommands(program: Command): void {
     .option('--tags <tags>', 'Comma-separated tags')
     .option('--wait', 'Use async mode and poll for result (default)', true)
     .option('--no-wait', 'Use synchronous mode (blocks until response)')
+    .option('--detach', 'Send in async mode and return the chatUid immediately, without polling')
     .option('--from-json <file>', 'Read full ProcessMessageDto from JSON file (- for stdin)')
     .action(
       withAction(async (identifier: unknown, opts: unknown) => {
         const id = identifier as string;
         const o = opts as {
           message: string; chatUid?: string; provider?: string; model?: string;
-          tags?: string; wait: boolean; fromJson?: string;
+          tags?: string; wait: boolean; detach?: boolean; fromJson?: string;
         };
         const client = createClient();
 
@@ -266,15 +272,25 @@ export function registerAssistantCommands(program: Command): void {
           };
         }
 
-        if (!o.wait) {
+        if (!o.wait && !o.detach) {
           return client.sendMessage(id, dto as any);
         }
 
         const asyncRes = await client.sendMessageAsync(id, dto as any);
-        const result = await pollChat(client, id, asyncRes.chatUid);
-        return result;
+        // `--detach` exists for callers that cannot block: polling here would
+        // hold the process for up to five minutes, and a sandboxed command dies
+        // long before that. Follow up with `assistants chats watch`.
+        if (o.detach) return asyncRes;
+        return pollChat(client, id, asyncRes.chatUid);
       }, (d) => {
-        const r = d as RealtimeChatHistory;
+        const r = d as RealtimeChatHistory & { chatUid?: string };
+        if (r.chatUid && !r.chatHistory) {
+          return [
+            md.success(`Message sent. Chat ${md.code(r.chatUid)} is processing.`),
+            '',
+            `Watch it with: ${md.code(`devic assistants chats watch ${r.chatUid} --assistant <identifier>`)}`,
+          ].join('\n');
+        }
         if (!r.chatHistory && Array.isArray(d)) {
           // Sync mode returns ChatMessage[]
           return [
@@ -377,6 +393,92 @@ export function registerAssistantCommands(program: Command): void {
           lines.push('', md.hr(), '', md.conversation(h.chatContent));
         }
         return lines.join('\n');
+      }),
+    );
+
+  // assistants chats watch <chatUid>
+  chats
+    .command('watch <chatUid>')
+    .description('Watch a chat for a short window and report only what changed since the last check')
+    .requiredOption('--assistant <identifier>', 'Assistant identifier the chat belongs to')
+    .option('--wait <seconds>', 'Wait before looking (spaces out consecutive checks)', '0')
+    .option('--window <seconds>', 'How long to keep watching', '35')
+    .option('--interval <seconds>', 'How often to re-check the chat', '3')
+    .option('--since <cursor>', 'Only report activity after this cursor (from a previous watch)')
+    .option('--until <event>', 'Return only on this event: change | terminal', 'change')
+    .addHelpText(
+      'after',
+      `
+Exit codes:
+  0   finished, or the realtime view expired and the outcome came from history
+  10  waiting for a client-side tool response
+  11  blocked by a usage limit
+  12  still running — call again with the returned cursor
+  13  no progress across several consecutive checks
+
+\`--wait\` + \`--window\` must stay at or below ${MAX_BUDGET_SECONDS}s: sandboxed commands are killed at ~45s.
+The realtime view lives in Redis for one hour after the last update; once it is gone this
+falls back to the persisted history, which is complete but no longer live.`,
+    )
+    .action(
+      withAction(async (chatUid: unknown, opts: unknown) => {
+        const o = opts as {
+          assistant: string; wait: string; window: string; interval: string;
+          since?: string; until?: string;
+        };
+        const until = o.until as 'change' | 'terminal';
+        if (!['change', 'terminal'].includes(until)) {
+          throw new DevicCliError('--until must be one of: change, terminal', 'INVALID_UNTIL');
+        }
+        const client = createClient();
+        const result = await watchChat(client, chatUid as string, {
+          assistant: o.assistant,
+          wait: Number(o.wait),
+          window: Number(o.window),
+          interval: Number(o.interval),
+          since: o.since,
+          until,
+        });
+        // The exit code is the signal the copilot branches on, so it has to be
+        // set here: `withAction` only owns the failure paths.
+        output(result, d => renderChatWatch(d as ChatWatchResult));
+        process.exit(result.exitCode);
+      }),
+    );
+
+  // assistants chats tool-response <chatUid>
+  chats
+    .command('tool-response <chatUid>')
+    .description('Answer the client-side tool calls a chat is waiting on')
+    .requiredOption('--assistant <identifier>', 'Assistant identifier the chat belongs to')
+    .requiredOption('--from-json <file>', 'Tool responses: an array, or {"responses":[…]} (- for stdin)')
+    .addHelpText(
+      'after',
+      `
+Each response is {"tool_call_id":"…","role":"tool","content":<result>}. Get the pending
+call ids from \`assistants chats watch\`.
+
+The chat's realtime key expires one hour after the last update and this endpoint rejects
+the response afterwards, even though the conversation is intact.`,
+    )
+    .action(
+      withAction(async (chatUid: unknown, opts: unknown) => {
+        const o = opts as { assistant: string; fromJson: string };
+        const client = createClient();
+        const payload = await readJsonInput(o.fromJson);
+        const responses = Array.isArray(payload)
+          ? payload
+          : (payload as { responses?: unknown[] }).responses;
+        if (!Array.isArray(responses) || responses.length === 0) {
+          throw new DevicCliError(
+            'Expected an array of tool responses, or an object with a non-empty `responses` array.',
+            'INVALID_PAYLOAD',
+          );
+        }
+        return client.sendToolResponses(o.assistant, chatUid as string, responses as any);
+      }, (d) => {
+        const r = d as { chatUid?: string };
+        return md.success(`Tool responses submitted${r.chatUid ? ` for chat ${md.code(r.chatUid)}` : ''}. The chat resumes processing.`);
       }),
     );
 
