@@ -59,6 +59,21 @@ devic assistants chat <identifier> -m "Hello" --no-wait   # sync mode
 devic assistants chat <identifier> -m "Hello" --detach    # return the chatUid, don't block
 devic assistants chat <identifier> -m "Hello" --chat-uid <uid>  # continue conversation
 devic assistants chat <identifier> -m "Hello" --provider anthropic --model claude-3-opus
+devic assistants chat <identifier> -m "Review this" --file https://…/report.pdf
+devic assistants chat <identifier> -m "Review this" --file "Q3 report=https://…/r.pdf"
+
+Explicit flags and `--from-json` are merged, and the flag wins. So
+`--chat-uid <uid> --from-json payload.json` continues that conversation even
+when the JSON does not mention it. `-m` may be omitted when the JSON carries
+`message`.
+
+> Before 0.18.1 the two were exclusive: passing `--from-json` silently dropped
+> `--chat-uid`, `--provider`, `--model` and `--tags`, so an attempt to continue a
+> conversation opened a new one and still exited 0.
+
+Attachments are `{name, donwloadUrl}` — the misspelling is the API's canonical
+field name. `--file` writes it for you, and a `--from-json` payload using the
+correctly spelled `downloadUrl` is translated instead of being ignored.
 
 # Stop an in-progress chat
 devic assistants stop <identifier> <chatUid>

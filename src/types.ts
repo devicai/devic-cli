@@ -34,7 +34,12 @@ export interface SkillTree {
 
 export interface ChatFile {
   name: string;
-  downloadUrl?: string;
+  /**
+   * Download URL. The misspelling is the canonical field name in the API
+   * schema; a payload using `downloadUrl` is accepted and then ignored, so the
+   * CLI normalises it before sending.
+   */
+  donwloadUrl?: string;
   fileType?: 'image' | 'document' | 'audio' | 'video' | 'other';
 }
 
