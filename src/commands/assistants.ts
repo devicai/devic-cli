@@ -10,7 +10,12 @@ import {
   resolveProjectId,
 } from '../helpers.js';
 import { pollChat } from '../polling.js';
-import { md } from '../output.js';
+import { md, output } from '../output.js';
+import { DevicCliError } from '../errors.js';
+import { MAX_BUDGET_SECONDS } from '../watch/threadWatch.js';
+import { watchChat } from '../watch/chatWatch.js';
+import type { ChatWatchResult } from '../watch/chatWatch.js';
+import { renderChatWatch } from '../watch/render.js';
 import type { RealtimeChatHistory, ChatHistory, AssistantSpecialization } from '../types.js';
 
 // The chats search endpoint filters by creation timestamps in milliseconds
@@ -377,6 +382,56 @@ export function registerAssistantCommands(program: Command): void {
           lines.push('', md.hr(), '', md.conversation(h.chatContent));
         }
         return lines.join('\n');
+      }),
+    );
+
+  // assistants chats watch <chatUid>
+  chats
+    .command('watch <chatUid>')
+    .description('Watch a chat for a short window and report only what changed since the last check')
+    .requiredOption('--assistant <identifier>', 'Assistant identifier the chat belongs to')
+    .option('--wait <seconds>', 'Wait before looking (spaces out consecutive checks)', '0')
+    .option('--window <seconds>', 'How long to keep watching', '35')
+    .option('--interval <seconds>', 'How often to re-check the chat', '3')
+    .option('--since <cursor>', 'Only report activity after this cursor (from a previous watch)')
+    .option('--until <event>', 'Return only on this event: change | terminal', 'change')
+    .addHelpText(
+      'after',
+      `
+Exit codes:
+  0   finished, or the realtime view expired and the outcome came from history
+  10  waiting for a client-side tool response
+  11  blocked by a usage limit
+  12  still running — call again with the returned cursor
+  13  no progress across several consecutive checks
+
+\`--wait\` + \`--window\` must stay at or below ${MAX_BUDGET_SECONDS}s: sandboxed commands are killed at ~45s.
+The realtime view lives in Redis for one hour after the last update; once it is gone this
+falls back to the persisted history, which is complete but no longer live.`,
+    )
+    .action(
+      withAction(async (chatUid: unknown, opts: unknown) => {
+        const o = opts as {
+          assistant: string; wait: string; window: string; interval: string;
+          since?: string; until?: string;
+        };
+        const until = o.until as 'change' | 'terminal';
+        if (!['change', 'terminal'].includes(until)) {
+          throw new DevicCliError('--until must be one of: change, terminal', 'INVALID_UNTIL');
+        }
+        const client = createClient();
+        const result = await watchChat(client, chatUid as string, {
+          assistant: o.assistant,
+          wait: Number(o.wait),
+          window: Number(o.window),
+          interval: Number(o.interval),
+          since: o.since,
+          until,
+        });
+        // The exit code is the signal the copilot branches on, so it has to be
+        // set here: `withAction` only owns the failure paths.
+        output(result, d => renderChatWatch(d as ChatWatchResult));
+        process.exit(result.exitCode);
       }),
     );
 

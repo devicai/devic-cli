@@ -1,11 +1,13 @@
 import { md } from '../output.js';
 import { humanDuration } from './diagnostics.js';
+import type { WatchAdvice, WatchDiagnostic, WatchReason } from './diagnostics.js';
 import type { ThreadWatchResult } from './threadWatch.js';
+import type { ChatWatchResult } from './chatWatch.js';
 import type { DeltaItem } from './delta.js';
 
 /**
  * Markdown built to be pasted straight into a chat by the copilot, so it never
- * dumps the raw thread: the point of `watch` is a short, actionable report.
+ * dumps the raw conversation: the point of `watch` is a short, actionable report.
  */
 
 function shortId(id: string): string {
@@ -25,85 +27,174 @@ function renderItem(item: DeltaItem): string {
   }
 }
 
-const HEADLINE: Record<string, string> = {
+const HEADLINE: Record<WatchReason, string> = {
   terminal: 'Finished',
   approval_required: 'Waiting for approval',
+  tool_response_required: 'Waiting for a tool response',
   waiting_for_response: 'Waiting for an external reply',
   paused: 'Paused',
   limit_exceeded: 'Usage limit reached',
+  realtime_expired: 'No live view left',
   progress: 'Running',
   window_elapsed: 'Still running',
   stalled: 'No progress',
 };
 
-export function renderThreadWatch(result: ThreadWatchResult): string {
-  const lines: string[] = [
-    md.h(2, `Thread ${md.code(shortId(result.threadId))} — ${result.state}`),
-    '',
-  ];
+/** The parts every watch report shares, whatever it is watching. */
+interface CommonReport {
+  title: string;
+  state: string;
+  reason: WatchReason;
+  advice: WatchAdvice;
+  polls: number;
+  inStateMs: number;
+  unchangedFor: { polls: number; ms: number };
+  new: DeltaItem[];
+  omitted?: number;
+  diagnostics: WatchDiagnostic[];
+  cursor?: string;
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** Extra lines right under the headline (state change, quoted request, …). */
+  context?: string[];
+  /** What to do now, when a human or another command has to act. */
+  actions?: string[];
+  /** The command that continues watching, when it still makes sense. */
+  nextCommand?: string;
+  /** The command that resumes later, after a `stop_polling`. */
+  resumeCommand?: string;
+  /** Renders success-styled diagnostics instead of warnings. */
+  succeeded?: boolean;
+}
 
-  const inState = humanDuration(result.progress.inStateMs);
+function renderCommon(report: CommonReport): string {
+  const lines: string[] = [md.h(2, report.title), ''];
+
   lines.push(
-    `${md.status(result.state)} ${md.b(HEADLINE[result.reason] ?? result.reason)} · ${inState} in this state · check ${result.progress.polls}`,
+    `${md.status(report.state)} ${md.b(HEADLINE[report.reason] ?? report.reason)} · ${humanDuration(
+      report.inStateMs,
+    )} in this state · check ${report.polls}`,
   );
+  if (report.context?.length) lines.push(...report.context);
 
-  if (result.stateChangedFrom) {
-    lines.push(`State moved from ${md.code(result.stateChangedFrom)} to ${md.code(result.state)}.`);
-  }
-  if (result.progress.tasks !== '-') lines.push(`Tasks: ${result.progress.tasks}`);
-  if (result.pausedReason) lines.push('', md.info(result.pausedReason));
-  if (result.resumesAt) lines.push('', `Resumes at ${new Date(result.resumesAt).toLocaleString()}.`);
-
-  if (result.new.length > 0) {
-    lines.push('', md.b('New since the last check'), ...result.new.map(renderItem));
-    if (result.omitted) lines.push(`_…${result.omitted} earlier messages omitted._`);
-  } else if (result.progress.unchangedFor.polls > 0) {
+  if (report.new.length > 0) {
+    lines.push('', md.b('New since the last check'), ...report.new.map(renderItem));
+    if (report.omitted) lines.push(`_…${report.omitted} earlier messages omitted._`);
+  } else if (report.unchangedFor.polls > 0) {
     lines.push(
       '',
-      `_Nothing new in ${result.progress.unchangedFor.polls} consecutive check(s) (${humanDuration(result.progress.unchangedFor.ms)})._`,
+      `_Nothing new in ${report.unchangedFor.polls} consecutive check(s) (${humanDuration(report.unchangedFor.ms)})._`,
     );
   } else {
     lines.push('', '_No new messages in this check._');
   }
 
-  if (result.diagnostics.length > 0) {
-    const ok = result.state === 'completed';
+  if (report.diagnostics.length > 0) {
     lines.push('');
-    for (const diagnostic of result.diagnostics) {
-      lines.push(ok ? md.success(diagnostic.message) : md.warn(diagnostic.message));
+    for (const diagnostic of report.diagnostics) {
+      lines.push(report.succeeded ? md.success(diagnostic.message) : md.warn(diagnostic.message));
     }
   }
 
-  if (result.advice === 'human_action_required') {
-    lines.push(
-      '',
-      md.b('A human has to decide. Stop watching.'),
-      `Approve: ${md.code(`devic agents threads approve ${result.threadId} -m "…"`)}`,
-      `Reject:  ${md.code(`devic agents threads reject ${result.threadId} -m "…" --retry`)}`,
-    );
-  } else if (result.advice === 'stop_polling') {
+  if (report.advice === 'human_action_required' && report.actions?.length) {
+    lines.push('', md.b('Someone has to act. Stop watching.'), ...report.actions);
+  } else if (report.advice === 'stop_polling') {
     lines.push('', md.b('Stop watching and report to the user.'));
-    if (result.reason !== 'terminal') {
-      lines.push(`Resume later with: ${md.code(`devic agents threads watch ${result.threadId}`)}`);
-    }
-  } else if (result.suggestedNext) {
-    const { wait, window, interval } = result.suggestedNext;
-    lines.push(
-      '',
-      `_Next check: ${md.code(
-        `devic agents threads watch ${result.threadId} --wait ${wait} --window ${window}${interval ? ` --interval ${interval}` : ''}`,
-      )}_`,
-    );
+    if (report.actions?.length) lines.push(...report.actions);
+    if (report.resumeCommand) lines.push(`Resume later with: ${md.code(report.resumeCommand)}`);
+  } else if (report.nextCommand) {
+    lines.push('', `_Next check: ${md.code(report.nextCommand)}_`);
   }
 
   const footer: string[] = [];
-  if (result.usage?.inputTokens != null || result.usage?.outputTokens != null) {
-    const total = (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0);
+  if (report.usage?.inputTokens != null || report.usage?.outputTokens != null) {
+    const total = (report.usage.inputTokens ?? 0) + (report.usage.outputTokens ?? 0);
     footer.push(`${total.toLocaleString()} tokens`);
   }
-  if (result.usage?.costUsd != null) footer.push(`$${result.usage.costUsd}`);
-  if (result.cursor) footer.push(`cursor ${md.code(result.cursor)}`);
+  if (report.usage?.costUsd != null) footer.push(`$${report.usage.costUsd}`);
+  if (report.cursor) footer.push(`cursor ${md.code(report.cursor)}`);
   if (footer.length > 0) lines.push('', `_${footer.join(' · ')}_`);
 
   return lines.join('\n');
+}
+
+function nextCommand(base: string, next?: { wait: number; window: number; interval?: number }): string | undefined {
+  if (!next) return undefined;
+  return `${base} --wait ${next.wait} --window ${next.window}${next.interval ? ` --interval ${next.interval}` : ''}`;
+}
+
+export function renderThreadWatch(result: ThreadWatchResult): string {
+  const context: string[] = [];
+  if (result.stateChangedFrom) {
+    context.push(`State moved from ${md.code(result.stateChangedFrom)} to ${md.code(result.state)}.`);
+  }
+  if (result.progress.tasks !== '-') context.push(`Tasks: ${result.progress.tasks}`);
+  if (result.pausedReason) context.push('', md.info(result.pausedReason));
+  if (result.resumesAt) context.push('', `Resumes at ${new Date(result.resumesAt).toLocaleString()}.`);
+
+  return renderCommon({
+    title: `Thread ${md.code(shortId(result.threadId))} — ${result.state}`,
+    state: result.state,
+    reason: result.reason,
+    advice: result.advice,
+    polls: result.progress.polls,
+    inStateMs: result.progress.inStateMs,
+    unchangedFor: result.progress.unchangedFor,
+    new: result.new,
+    omitted: result.omitted,
+    diagnostics: result.diagnostics,
+    cursor: result.cursor,
+    usage: result.usage,
+    context,
+    actions:
+      result.advice === 'human_action_required'
+        ? [
+            `Approve: ${md.code(`devic agents threads approve ${result.threadId} -m "…"`)}`,
+            `Reject:  ${md.code(`devic agents threads reject ${result.threadId} -m "…" --retry`)}`,
+          ]
+        : undefined,
+    nextCommand: nextCommand(`devic agents threads watch ${result.threadId}`, result.suggestedNext),
+    resumeCommand:
+      result.reason === 'terminal' ? undefined : `devic agents threads watch ${result.threadId}`,
+    succeeded: result.state === 'completed',
+  });
+}
+
+export function renderChatWatch(result: ChatWatchResult): string {
+  const context: string[] = [];
+  if (result.statusChangedFrom) {
+    context.push(`Status moved from ${md.code(result.statusChangedFrom)} to ${md.code(result.status)}.`);
+  }
+  if (result.limitExceeded?.message) context.push('', md.info(result.limitExceeded.message));
+
+  const base = `devic assistants chats watch ${result.chatUid} --assistant ${result.assistant}`;
+  const actions: string[] = [];
+  if (result.pendingToolCalls?.length) {
+    actions.push(
+      `Pending tool call(s): ${result.pendingToolCalls.map(name => md.code(name)).join(', ')}`,
+      'Answer with `POST /api/v1/assistants/:identifier/chats/:chatUid/tool-response` (curl — the CLI does not cover it).',
+    );
+  }
+  if (result.handedOffSubThreadId) {
+    actions.push(`Watch the agent doing the work: ${md.code(`devic agents threads watch ${result.handedOffSubThreadId}`)}`);
+  }
+
+  return renderCommon({
+    title: `Chat ${md.code(shortId(result.chatUid))} — ${result.status}`,
+    state: result.status,
+    reason: result.reason,
+    advice: result.advice,
+    polls: result.progress.polls,
+    inStateMs: result.progress.inStatusMs,
+    unchangedFor: result.progress.unchangedFor,
+    new: result.new,
+    omitted: result.omitted,
+    diagnostics: result.diagnostics,
+    cursor: result.cursor,
+    usage: result.usage,
+    context,
+    actions: actions.length > 0 ? actions : undefined,
+    nextCommand: nextCommand(base, result.suggestedNext),
+    resumeCommand: result.reason === 'terminal' || result.reason === 'realtime_expired' ? undefined : base,
+    succeeded: result.status === 'completed',
+  });
 }

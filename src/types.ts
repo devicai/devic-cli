@@ -93,7 +93,14 @@ export interface AsyncResponse {
   error?: string;
 }
 
-export type RealtimeStatus = 'processing' | 'completed' | 'error' | 'waiting_for_tool_response' | 'handed_off';
+export type RealtimeStatus =
+  | 'buffering'
+  | 'processing'
+  | 'completed'
+  | 'error'
+  | 'waiting_for_tool_response'
+  | 'handed_off'
+  | 'limit_exceeded';
 
 export interface RealtimeChatHistory {
   chatUID: string;
@@ -103,6 +110,14 @@ export interface RealtimeChatHistory {
   lastUpdatedAt: number;
   pendingToolCalls?: ToolCall[];
   handedOffSubThreadId?: string;
+  /** Present when `status === 'limit_exceeded'`: what blocked the message. */
+  limitExceeded?: {
+    message?: string;
+    blockingRule?: unknown;
+    current?: number;
+    limit?: number;
+    resetsAt?: number;
+  };
 }
 
 export interface ChatHistory {
@@ -122,6 +137,7 @@ export interface ChatHistory {
   handedOff?: boolean;
   handedOffSubThreadId?: string;
   handedOffToolCallId?: string;
+  tokenUsage?: ThreadTokenUsage;
 }
 
 export interface AssistantSpecialization {

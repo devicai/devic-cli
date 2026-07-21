@@ -65,6 +65,7 @@ devic assistants stop <identifier> <chatUid>
 # Chat histories
 devic assistants chats list <identifier> --limit 20
 devic assistants chats get <identifier> <chatUid>
+devic assistants chats watch <chatUid> --assistant <identifier>   # incremental monitoring
 devic assistants chats search --assistant default --tags support,urgent --start-date 2024-01-01
 ```
 
@@ -188,6 +189,7 @@ call**, and says whether watching further is worth it.
 
 ```bash
 devic agents threads watch <threadId> --wait 5 --window 35 --interval 3
+devic assistants chats watch <chatUid> --assistant <identifier> --wait 5 --window 35
 ```
 
 | Flag | Default | Meaning |
@@ -216,6 +218,13 @@ Exit codes drive the decision:
 | 12 | `progress`, `window_elapsed` | still running — call again with the returned cursor |
 | 13 | `stalled` | nothing changed across several consecutive checks |
 | 1 | — | error (thread not found, bad budget, auth) |
+
+For chats the same rules apply over the realtime view, with two differences worth knowing:
+the assistant can block on a **client-side tool response** (exit 10 — only whoever declared the
+tool can answer, over `POST /chats/:chatUid/tool-response`), and the realtime key **expires one
+hour after the last update**. Once it does, the API rebuilds the response from the persisted
+history and labels it `completed` whatever actually happened; `watch` flags that case rather
+than reporting a synthetic success.
 
 The `advice` field (`continue`, `slow_down`, `human_action_required`, `stop_polling`) and
 `suggestedNext` carry the recommended cadence, and `diagnostics` explains *why* a thread is

@@ -11,9 +11,13 @@ export type WatchAdvice = 'continue' | 'slow_down' | 'human_action_required' | '
 export type WatchReason =
   | 'terminal'
   | 'approval_required'
+  /** Chats only: the assistant is blocked on a client-side tool response. */
+  | 'tool_response_required'
   | 'waiting_for_response'
   | 'paused'
   | 'limit_exceeded'
+  /** Chats only: the Redis realtime key expired, so there is no live view left. */
+  | 'realtime_expired'
   | 'progress'
   | 'window_elapsed'
   | 'stalled';
@@ -233,8 +237,11 @@ export function diagnose(
 function exitCodeFor(reason: WatchReason): number {
   switch (reason) {
     case 'terminal':
+    // No live state left, and the persisted history already holds the outcome.
+    case 'realtime_expired':
       return EXIT_CODES.SUCCESS;
     case 'approval_required':
+    case 'tool_response_required':
       return EXIT_CODES.WATCH_APPROVAL_REQUIRED;
     case 'waiting_for_response':
     case 'paused':
@@ -257,4 +264,127 @@ function suggestNext(advice: WatchAdvice, reason: WatchReason): DiagnosisResult[
   }
   if (advice === 'slow_down') return { wait: 30, window: 10, interval: 5 };
   return { wait: 5, window: 35, interval: 3 };
+}
+
+// ── Assistant chats ──
+
+/** Realtime statuses that mean the run is over, one way or another. */
+const CHAT_TERMINAL: Set<string> = new Set(['completed', 'error']);
+
+/** Realtime statuses where nothing moves until someone else acts. */
+const CHAT_BLOCKING: Set<string> = new Set(['waiting_for_tool_response', 'limit_exceeded']);
+
+export function isChatTerminal(status: string): boolean {
+  return CHAT_TERMINAL.has(status);
+}
+
+export function isChatBlocking(status: string): boolean {
+  return CHAT_BLOCKING.has(status);
+}
+
+export interface ChatDiagnosticInput {
+  status: string;
+  pendingToolCalls?: Array<{ function?: { name?: string } }>;
+  handedOffSubThreadId?: string;
+  limitExceeded?: { message?: string; resetsAt?: number; current?: number; limit?: number };
+  /** True when the realtime key is gone (404) and the report comes from Mongo. */
+  realtimeExpired?: boolean;
+}
+
+export function diagnoseChat(
+  chat: ChatDiagnosticInput,
+  ctx: DiagnosticContext,
+  opts: { changed: boolean },
+): DiagnosisResult {
+  const diagnostics: WatchDiagnostic[] = [];
+  let advice: WatchAdvice = 'continue';
+  const inState = humanDuration(ctx.now - ctx.stateSince);
+
+  const add = (code: string, message: string, a: WatchAdvice): void => {
+    diagnostics.push({ code, message });
+    advice = strongest(advice, a);
+  };
+
+  let reason: WatchReason;
+
+  if (chat.realtimeExpired) {
+    reason = 'realtime_expired';
+    add(
+      'CHAT_REALTIME_EXPIRED',
+      'The realtime key expired (it lives one hour after the last update), so this comes from the ' +
+        'persisted history and the API labels it `completed` regardless of how the run actually ended. ' +
+        'Read the last messages before reporting it as successful — a chat interrupted mid-run looks identical.',
+      'stop_polling',
+    );
+  } else if (isChatTerminal(chat.status)) {
+    reason = 'terminal';
+    add(
+      chat.status === 'error' ? 'CHAT_ERRORED' : 'CHAT_FINISHED',
+      `The chat finished with status \`${chat.status}\`.`,
+      'stop_polling',
+    );
+  } else if (chat.status === 'waiting_for_tool_response') {
+    reason = 'tool_response_required';
+    const names = (chat.pendingToolCalls ?? [])
+      .map(call => call?.function?.name)
+      .filter(Boolean)
+      .join(', ');
+    add(
+      'TOOL_RESPONSE_PENDING',
+      `The assistant is waiting for a client-side tool response${names ? ` (${names})` : ''}, ` +
+        `${inState} so far. Only whoever declared the tool can answer, with ` +
+        'POST /api/v1/assistants/:identifier/chats/:chatUid/tool-response. ' +
+        'The realtime key expires one hour after the last update and the endpoint rejects the response afterwards.',
+      'human_action_required',
+    );
+  } else if (chat.status === 'limit_exceeded') {
+    reason = 'limit_exceeded';
+    const resets = chat.limitExceeded?.resetsAt
+      ? ` Quota resets at ${new Date(chat.limitExceeded.resetsAt).toLocaleString()}.`
+      : '';
+    add(
+      'CHAT_LIMIT_EXCEEDED',
+      `A usage limit blocked the message before it reached the model.${resets}`,
+      'stop_polling',
+    );
+  } else if (chat.status === 'handed_off') {
+    reason = opts.changed ? 'progress' : 'window_elapsed';
+    add(
+      'CHAT_HANDED_OFF',
+      chat.handedOffSubThreadId
+        ? `An agent is doing the work in thread ${chat.handedOffSubThreadId}. Watch that thread instead: ` +
+          `devic agents threads watch ${chat.handedOffSubThreadId}`
+        : 'An agent is doing the work in a subthread; the chat stays still until it reports back.',
+      'slow_down',
+    );
+  } else if (chat.status === 'buffering') {
+    reason = opts.changed ? 'progress' : 'window_elapsed';
+    add(
+      'CHAT_BUFFERING',
+      'The message is held in the input buffer, waiting to be grouped with anything that arrives next ' +
+        '(`inputDelayMs` on the assistant). Processing has not started yet.',
+      'continue',
+    );
+  } else {
+    reason = opts.changed ? 'progress' : ctx.unchangedPolls >= STALL_THRESHOLD ? 'stalled' : 'window_elapsed';
+  }
+
+  if (!opts.changed && !isChatTerminal(chat.status) && !isChatBlocking(chat.status) && !chat.realtimeExpired) {
+    if (ctx.unchangedPolls >= GIVE_UP_THRESHOLD) {
+      add(
+        'NO_PROGRESS',
+        `Nothing has changed in ${ctx.unchangedPolls} consecutive checks (${inState} in \`${chat.status}\`). Stop watching and tell the user.`,
+        'stop_polling',
+      );
+    } else if (ctx.unchangedPolls >= STALL_THRESHOLD) {
+      add(
+        'SLOW_PROGRESS',
+        `No new messages in ${ctx.unchangedPolls} consecutive checks. Check back less often.`,
+        'slow_down',
+      );
+    }
+  }
+
+  const exitCode = exitCodeFor(reason);
+  return { reason, advice, diagnostics, exitCode, suggestedNext: suggestNext(advice, reason) };
 }
