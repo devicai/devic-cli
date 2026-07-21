@@ -32,6 +32,43 @@ function parseDateToMs(value: string, endOfDay = false): number {
   return ms;
 }
 
+/**
+ * `--file` accepts `https://…` or `Display name=https://…`. Without a name we
+ * take the last path segment, which is what a human would call the file.
+ */
+function parseFileFlag(value: string): Record<string, unknown> {
+  const eq = value.indexOf('=');
+  // Only treat `=` as a separator when it comes before the URL, so query
+  // strings (`?a=b`) do not get mistaken for a name.
+  const hasName = eq > 0 && eq < value.indexOf('://');
+  const name = hasName ? value.slice(0, eq).trim() : undefined;
+  const url = (hasName ? value.slice(eq + 1) : value).trim();
+
+  if (!/^https?:\/\//i.test(url)) {
+    throw new DevicCliError(
+      `--file expects a download URL (got "${value}"). Use \`--file https://…\` or \`--file "Report=https://…"\`. ` +
+        'To attach a file from a sandbox, get its URL with the download tool first.',
+      'INVALID_FILE',
+    );
+  }
+
+  const fallback = url.split('?')[0].split('/').filter(Boolean).pop() || 'file';
+  return { name: name || decodeURIComponent(fallback), donwloadUrl: url };
+}
+
+/**
+ * The API's field for a file URL is `donwloadUrl` — the typo is the canonical
+ * name in the schema. A payload using the correctly spelled `downloadUrl` is
+ * accepted and the attachment is then silently ignored, so we translate it.
+ */
+function normalizeChatFile(file: unknown): unknown {
+  if (!file || typeof file !== 'object') return file;
+  const f = file as Record<string, unknown>;
+  if (f.donwloadUrl || !f.downloadUrl) return file;
+  const { downloadUrl, ...rest } = f;
+  return { ...rest, donwloadUrl: downloadUrl };
+}
+
 function formatAssistant(a: AssistantSpecialization): string {
   const lines = [
     md.h(2, `Assistant: ${a.name}`),
@@ -240,36 +277,55 @@ export function registerAssistantCommands(program: Command): void {
   assistants
     .command('chat <identifier>')
     .description('Send a message to an assistant')
-    .requiredOption('-m, --message <text>', 'Message to send')
+    .option('-m, --message <text>', 'Message to send (required unless --from-json carries it)')
     .option('--chat-uid <uid>', 'Continue an existing conversation')
     .option('--provider <provider>', 'LLM provider override')
     .option('--model <model>', 'Model override')
     .option('--tags <tags>', 'Comma-separated tags')
+    .option(
+      '--file <url...>',
+      'Attach a file by download URL (repeatable). Use `name=url` to set the display name.',
+    )
     .option('--wait', 'Use async mode and poll for result (default)', true)
     .option('--no-wait', 'Use synchronous mode (blocks until response)')
     .option('--detach', 'Send in async mode and return the chatUid immediately, without polling')
-    .option('--from-json <file>', 'Read full ProcessMessageDto from JSON file (- for stdin)')
+    .option('--from-json <file>', 'Read a ProcessMessageDto from JSON file (- for stdin). Explicit flags override its keys.')
     .action(
       withAction(async (identifier: unknown, opts: unknown) => {
         const id = identifier as string;
         const o = opts as {
-          message: string; chatUid?: string; provider?: string; model?: string;
-          tags?: string; wait: boolean; detach?: boolean; fromJson?: string;
+          message?: string; chatUid?: string; provider?: string; model?: string;
+          tags?: string; file?: string[]; wait: boolean; detach?: boolean; fromJson?: string;
         };
         const client = createClient();
 
-        let dto: Record<string, unknown>;
-        if (o.fromJson) {
-          dto = await readJsonInput(o.fromJson);
-          if (!dto.message) dto.message = o.message;
-        } else {
-          dto = {
-            message: o.message,
-            ...(o.chatUid && { chatUid: o.chatUid }),
-            ...(o.provider && { provider: o.provider }),
-            ...(o.model && { model: o.model }),
-            ...(o.tags && { tags: o.tags.split(',').map(t => t.trim()) }),
-          };
+        // Flags and --from-json are merged, with the explicit flag winning.
+        // They used to be exclusive branches: passing --from-json silently
+        // dropped --chat-uid (and provider/model/tags), so an attempt to
+        // continue a conversation opened a brand new one instead — with a
+        // successful exit code and no warning.
+        const dto: Record<string, unknown> = o.fromJson
+          ? await readJsonInput(o.fromJson)
+          : {};
+
+        if (o.message) dto.message = o.message;
+        if (o.chatUid) dto.chatUid = o.chatUid;
+        if (o.provider) dto.provider = o.provider;
+        if (o.model) dto.model = o.model;
+        if (o.tags) dto.tags = o.tags.split(',').map(t => t.trim());
+        if (o.file?.length) {
+          dto.files = [
+            ...(Array.isArray(dto.files) ? dto.files : []),
+            ...o.file.map(parseFileFlag),
+          ];
+        }
+        if (Array.isArray(dto.files)) dto.files = dto.files.map(normalizeChatFile);
+
+        if (typeof dto.message !== 'string' || !dto.message.trim()) {
+          throw new DevicCliError(
+            'A message is required: pass `-m "<text>"`, or include `message` in the --from-json payload.',
+            'MISSING_MESSAGE',
+          );
         }
 
         if (!o.wait && !o.detach) {
