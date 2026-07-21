@@ -66,6 +66,11 @@ const TOOL_GROUPS_TOPLEVEL_HINT: Alias = {
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
+const KNOWLEDGE_SKILLS_HINT = {
+  suggestion:
+    'Use `knowledgeSkills: [{ id, type: "document" | "folder" }]` (the `devic skills` catalog). Note `availableSkillIds` is a DIFFERENT, legacy feature (Tool Skills, mounted at runtime) — putting a catalog skill id there stores cleanly and does nothing.',
+};
+
 const AGENT_SCHEMA: Schema = {
   label: 'agent',
   allowed: [
@@ -134,6 +139,13 @@ const AGENT_SCHEMA: Schema = {
       suggestion:
         'For agents this lives nested: `{ "assistantSpecialization": { "subagentsIds": [...] } }`.',
     },
+    knowledgeSkills: {
+      suggestion:
+        'For agents this lives nested: `{ "assistantSpecialization": { "knowledgeSkills": [{ id, type }] } }`.',
+    },
+    skills: KNOWLEDGE_SKILLS_HINT,
+    skillIds: KNOWLEDGE_SKILLS_HINT,
+    skillsIds: KNOWLEDGE_SKILLS_HINT,
     agentId: {
       suggestion:
         'Drop `agentId` — the ID is assigned by the API on creation, not provided in the payload.',
@@ -183,6 +195,7 @@ const ASSISTANT_SCHEMA: Schema = {
     'guardrailsConfiguration',
     'codeSnippetIds',
     'availableSkillIds',
+    'knowledgeSkills',
     'subagentsIds',
     'maxChatMessages',
     'maxToolResponseInputTokens',
@@ -220,6 +233,13 @@ const ASSISTANT_SCHEMA: Schema = {
     llm: {
       suggestion:
         'For assistants the model field is `model`, not `llm`.',
+    },
+    skills: KNOWLEDGE_SKILLS_HINT,
+    skillIds: KNOWLEDGE_SKILLS_HINT,
+    skillsIds: KNOWLEDGE_SKILLS_HINT,
+    knowledge: {
+      suggestion:
+        'Attach documents and folders with `devic documents attach` / the folder attach endpoint — assistants do not take `knowledgeDocumentIds` in the payload. Skills do go in the payload, as `knowledgeSkills`.',
     },
   },
   patterns: [
@@ -357,6 +377,8 @@ const DOCUMENT_SCHEMA: Schema = {
     'parentDocumentId',
     'currentVersion',
     'tokenCount',
+    'isSkill',
+    'tags',
   ],
   aliases: {
     project: PROJECT_ID_HINT,
@@ -376,6 +398,10 @@ const DOCUMENT_SCHEMA: Schema = {
     file: { suggestion: 'Use `fileName` for the original filename, and `fileType` for the extension.' },
     type: { suggestion: 'Use `fileType` (md|pdf|txt|docx).' },
     extension: { suggestion: 'Use `fileType`.' },
+    skill: { suggestion: 'Use `isSkill: true` to flag the document as a skill.' },
+    is_skill: { suggestion: 'Use `isSkill`.' },
+    categories: { suggestion: 'Use `tags` (array of strings).' },
+    labels: { suggestion: 'Use `tags`.' },
   },
   patterns: [
     { regex: /^project/i, suggestion: 'Did you mean `projectId`?' },

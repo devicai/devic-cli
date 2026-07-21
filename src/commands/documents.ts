@@ -157,6 +157,9 @@ export function registerDocumentCommands(program: Command): void {
       .option('--from-stdin', 'Read markdown content from stdin (also auto-detected when piped)')
       .option('--project <project>', 'Optional project (_id, identifier, or name)')
       .option('--parent <documentId>', 'Optional parent document ID')
+      .option('--folder <folderId>', 'File the document into a folder')
+      .option('--tags <tags...>', 'Category tags')
+      .option('--as-skill', 'Flag the document as a skill (name/description come from its frontmatter)')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (opts: unknown) => {
@@ -167,6 +170,9 @@ export function registerDocumentCommands(program: Command): void {
           fromStdin?: boolean;
           project?: string;
           parent?: string;
+          folder?: string;
+          tags?: string[];
+          asSkill?: boolean;
           fromJson?: string;
           skipValidation?: boolean;
         };
@@ -193,6 +199,9 @@ export function registerDocumentCommands(program: Command): void {
           data = { name: o.name, markdownContent: content };
           if (o.project) data.projectId = await resolveProjectId(client, o.project);
           if (o.parent) data.parentDocumentId = o.parent;
+          if (o.folder) data.folderId = o.folder;
+          if (o.tags?.length) data.tags = o.tags;
+          if (o.asSkill) data.isSkill = true;
         }
 
         return client.createMarkdownDocument(data as any);
@@ -218,6 +227,9 @@ export function registerDocumentCommands(program: Command): void {
       .option('--from-stdin', 'Read markdown content from stdin (also auto-detected when piped)')
       .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option('--folder <folderId>', 'Folder ID (use "null" to unset)')
+      .option('--tags <tags...>', 'Category tags (replaces the current list)')
+      .option('--as-skill', 'Flag the document as a skill')
+      .option('--no-skill', 'Unflag the document as a skill')
       .option('--from-json <file>', 'Read full payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (documentId: unknown, opts: unknown) => {
@@ -230,6 +242,10 @@ export function registerDocumentCommands(program: Command): void {
           fromStdin?: boolean;
           project?: string;
           folder?: string;
+          tags?: string[];
+          asSkill?: boolean;
+          // commander maps `--no-skill` to `skill: false`; absent means untouched.
+          skill?: boolean;
           fromJson?: string;
           skipValidation?: boolean;
         };
@@ -242,6 +258,9 @@ export function registerDocumentCommands(program: Command): void {
           data = {};
           if (o.name) data.name = o.name;
           if (o.summary) data.summary = o.summary;
+          if (o.tags?.length) data.tags = o.tags;
+          if (o.asSkill) data.isSkill = true;
+          else if (o.skill === false) data.isSkill = false;
           if (o.project !== undefined)
             data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
           if (o.folder !== undefined)
@@ -269,7 +288,7 @@ export function registerDocumentCommands(program: Command): void {
           // with 200 + the unchanged document (which reads as success to callers).
           if (Object.keys(data).length === 0) {
             throw new Error(
-              'Nothing to update: provide --name, --summary, --content, --from-file <path>, --project, --folder, ' +
+              'Nothing to update: provide --name, --summary, --content, --from-file <path>, --project, --folder, --tags, --as-skill/--no-skill, ' +
                 'or pipe markdown via `--from-stdin` (e.g. `cat file.md | devic documents update <id> --from-stdin`).',
             );
           }
@@ -481,6 +500,11 @@ export function registerDocumentCommands(program: Command): void {
     .option('--project <project>', 'Project scope (_id, identifier, or name)')
     .option('--parent <folderId>', 'Parent folder ID')
     .option('--color <color>', 'Color tag')
+    .option('--tags <tags...>', 'Category tags')
+    .option(
+      '--as-skill',
+      'Flag the folder as a folder-skill. Prefer `devic skills create`, which also writes the SKILL.md manifest.',
+    )
     .action(
       withAction(async (opts: unknown) => {
         const o = opts as {
@@ -488,6 +512,8 @@ export function registerDocumentCommands(program: Command): void {
           project?: string;
           parent?: string;
           color?: string;
+          tags?: string[];
+          asSkill?: boolean;
         };
         const client = createClient();
         return client.createDocumentFolder({
@@ -495,7 +521,9 @@ export function registerDocumentCommands(program: Command): void {
           projectId: o.project ? await resolveProjectId(client, o.project) : undefined,
           parentFolderId: o.parent,
           color: o.color,
-        });
+          ...(o.tags?.length ? { tags: o.tags } : {}),
+          ...(o.asSkill ? { isSkill: true } : {}),
+        } as any);
       }, (d) => {
         const f = d as any;
         return md.success(`Folder ${md.b(f.name)} created (${md.code(f._id)}).`);
@@ -508,12 +536,20 @@ export function registerDocumentCommands(program: Command): void {
     .option('--name <name>', 'New name')
     .option('--parent <folderId>', 'Parent folder ID (use "null" to unset)')
     .option('--color <color>', 'Color tag')
+    .option('--project <project>', 'Project _id, identifier or name (use "null" to unset). Cascades to the whole subtree.')
+    .option('--tags <tags...>', 'Category tags (replaces the current list)')
+    .option('--as-skill', 'Flag the folder as a folder-skill')
+    .option('--no-skill', 'Unflag the folder as a folder-skill')
     .action(
       withAction(async (folderId: unknown, opts: unknown) => {
         const o = opts as {
           name?: string;
           parent?: string;
           color?: string;
+          project?: string;
+          tags?: string[];
+          asSkill?: boolean;
+          skill?: boolean;
         };
         const client = createClient();
         const data: Record<string, unknown> = {};
@@ -521,6 +557,12 @@ export function registerDocumentCommands(program: Command): void {
         if (o.parent !== undefined)
           data.parentFolderId = o.parent === 'null' ? null : o.parent;
         if (o.color) data.color = o.color;
+        if (o.project !== undefined)
+          data.projectId =
+            o.project === 'null' ? null : await resolveProjectId(client, o.project);
+        if (o.tags?.length) data.tags = o.tags;
+        if (o.asSkill) data.isSkill = true;
+        else if (o.skill === false) data.isSkill = false;
         return client.updateDocumentFolder(folderId as string, data);
       }, () => md.success('Folder updated.')),
     );
