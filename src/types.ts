@@ -212,6 +212,8 @@ export enum AgentThreadState {
   PAUSED_FOR_RESUME = 'paused_for_resume',
   HANDED_OFF = 'handed_off',
   GUARDRAIL_TRIGGER = 'guardrail_trigger',
+  UNDER_CONSTRUCTION = 'under_construction',
+  LIMIT_EXCEEDED = 'limit_exceeded',
 }
 
 export interface AgentTaskDto {
@@ -219,6 +221,19 @@ export interface AgentTaskDto {
   title?: string;
   description?: string;
   completed: boolean;
+}
+
+export interface ThreadStateChange {
+  state: AgentThreadState;
+  timestamp: number;
+  userUID?: string;
+  source?: string;
+}
+
+export interface ThreadTokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cost?: { totalCost?: number };
 }
 
 export interface AgentThreadDto {
@@ -231,7 +246,13 @@ export interface AgentThreadDto {
   pausedReason?: string;
   name?: string;
   creationTimestampMs?: number;
+  finishTimestampMs?: number;
   lastEditTimestampMs?: number;
+  threadStatesChanges?: ThreadStateChange[];
+  tokenUsage?: ThreadTokenUsage;
+  /** Epoch ms when a `paused` thread is scheduled to resume. Only present on newer API versions. */
+  pausedUntil?: number;
+  pausedTimestampMS?: number;
   pauseUntil?: number;
   isSubthread?: boolean;
   parentThreadId?: string;
@@ -326,4 +347,12 @@ export const EXIT_CODES = {
   ERROR: 1,
   AUTH_REQUIRED: 2,
   POLL_TIMEOUT: 3,
+  /** `watch`: execution stopped waiting for a human decision. */
+  WATCH_APPROVAL_REQUIRED: 10,
+  /** `watch`: execution is waiting on something outside the CLI (external channel, scheduled resume). */
+  WATCH_WAITING: 11,
+  /** `watch`: still running — call again with the returned cursor. */
+  WATCH_ALIVE: 12,
+  /** `watch`: no progress for several consecutive checks. */
+  WATCH_STALLED: 13,
 } as const;
