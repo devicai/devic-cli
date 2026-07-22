@@ -18,6 +18,32 @@ const parseToolList = (value?: string): string[] | undefined =>
     ? value.split(',').map((t) => t.trim()).filter(Boolean)
     : undefined;
 
+/** Renders a `{tools:[{function,enabled}], total, nextCursor?}` payload. */
+function formatIntegrationTools(d: unknown): string {
+  const data = d as any;
+  const items = data.tools ?? [];
+  if (items.length === 0) return '_No tools._';
+  const lines = [
+    md.h(2, 'Tools'),
+    '',
+    md.table(
+      items.map((t: any) => ({
+        name: t.function?.name ?? '-',
+        enabled: t.enabled ? 'yes' : 'no',
+        description: (t.function?.description ?? '-').slice(0, 70),
+      })),
+      { columns: ['name', 'enabled', 'description'] },
+    ),
+  ];
+  if (data.total != null) lines.push('', md.info(`${data.total} tool(s)`));
+  if (data.nextCursor) {
+    lines.push(
+      md.info(`More — pass ${md.code(`--cursor ${data.nextCursor}`)} for the next page.`),
+    );
+  }
+  return lines.join('\n');
+}
+
 function formatCreatedServer(s: IntegrationServer): string {
   const lines = [
     md.success(`Integration tool server created: ${md.b(s.name || '')}`),
@@ -88,6 +114,34 @@ export function registerIntegrationCommands(program: Command): void {
           );
         }
         return lines.join('\n');
+      }),
+    );
+
+  // integrations connected
+  integrations
+    .command('connected')
+    .description('List the integrations this workspace has connected')
+    .action(
+      withAction(async () => {
+        const client = createClient();
+        return client.listConnectedIntegrations();
+      }, (d) => {
+        const items = (Array.isArray(d) ? d : []) as any[];
+        if (items.length === 0) return '_No integrations connected yet._';
+        return [
+          md.h(2, 'Connected integrations'),
+          '',
+          md.table(
+            items.map((i) => ({
+              id: i.id,
+              app: i.app,
+              name: i.name,
+              connected: i.connected ? 'yes' : 'no',
+              tools: i.exposedToolCount ?? 'all',
+            })),
+            { columns: ['id', 'app', 'name', 'connected', 'tools'] },
+          ),
+        ].join('\n');
       }),
     );
 
@@ -265,5 +319,61 @@ export function registerIntegrationCommands(program: Command): void {
           )}_, or re-run with_ ${md.code('--wait')} _to do it automatically._`,
         ].join('\n');
       }),
+    );
+
+  // ── integrations tools: which of the app's tools this integration exposes ──
+  const tools = integrations
+    .command('tools')
+    .description('Manage which tools a connected integration exposes');
+
+  tools
+    .command('list <id>')
+    .description('List a connected integration’s tools')
+    .option('--available', 'Browse the connected app’s whole catalogue, marking which are enabled')
+    .option('--limit <n>', 'Page size when browsing the catalogue')
+    .option('--cursor <cursor>', 'Page token from a previous response')
+    .action(
+      withAction(async (id: unknown, opts: unknown) => {
+        const o = opts as { available?: boolean; limit?: string; cursor?: string };
+        const client = createClient();
+        return client.listIntegrationTools(id as string, {
+          available: o.available,
+          limit: o.limit ? Number(o.limit) : undefined,
+          cursor: o.cursor,
+        });
+      }, (d) => formatIntegrationTools(d)),
+    );
+
+  tools
+    .command('enable <id> [slugs...]')
+    .description('Expose more tools (add to the current selection). --all exposes them all.')
+    .option('--all', 'Expose every tool the app has')
+    .action(
+      withAction(async (id: unknown, slugs: unknown, opts: unknown) => {
+        const o = opts as { all?: boolean };
+        const list = (slugs as string[]) ?? [];
+        if (!o.all && list.length === 0) {
+          throw new DevicCliError(
+            'Name the tools to enable, or pass --all.',
+            'INVALID_USAGE',
+          );
+        }
+        const client = createClient();
+        return client.updateIntegrationTools(id as string, {
+          ...(o.all ? { all: true } : { enable: list }),
+        });
+      }, (d) => [md.success('Tools updated.'), '', formatIntegrationTools(d)].join('\n')),
+    );
+
+  tools
+    .command('disable <id> <slugs...>')
+    .description('Stop exposing tools (remove from the current selection)')
+    .action(
+      withAction(async (id: unknown, slugs: unknown) => {
+        const client = createClient();
+        return client.updateIntegrationTools(id as string, {
+          disable: slugs as string[],
+        });
+      }, (d) => [md.success('Tools updated.'), '', formatIntegrationTools(d)].join('\n')),
     );
 }

@@ -172,6 +172,41 @@ Credentials come back masked (`••••••••`). Sending a masked valu
 update keeps the stored secret, so the usual `get` → edit → `update` round trip
 is safe; send a real value to change it.
 
+### Integrations & Triggers
+
+Connect apps (Gmail, Drive, HubSpot…) and start agents/assistants from their
+events. `integrations` covers the connected-app side; `triggers` the event
+subscriptions.
+
+```bash
+# Catalogue of connectable apps and an app's event types
+devic integrations list --search gmail
+devic integrations triggers gmail                       # event types
+devic integrations triggers gmail GMAIL_NEW_GMAIL_MESSAGE
+
+# Connect an account, then build the integration (browser OAuth)
+devic integrations connect gmail --wait --tools GMAIL_GET_PROFILE
+
+# The integrations this workspace has connected
+devic integrations connected
+
+# Change which tools a connected integration exposes
+devic integrations tools list <integrationId>
+devic integrations tools list <integrationId> --available   # whole catalogue, marking enabled
+devic integrations tools enable <integrationId> GMAIL_SEND_EMAIL GMAIL_CREATE_EMAIL_DRAFT
+devic integrations tools disable <integrationId> GMAIL_SEND_EMAIL
+devic integrations tools enable <integrationId> --all       # expose every tool the app has
+
+# Triggers: start an agent/assistant from an app event
+devic triggers list --agent <agentId>
+devic triggers create --tool-server <integrationId> --agent <agentId> \
+    --trigger GMAIL_NEW_GMAIL_MESSAGE --message "New: {{data.subject}}"
+devic triggers events <triggerId>
+```
+
+`integrations` is for connected apps; `tool-servers` stays for MCP and custom
+servers. An integration is addressed by its id (from `integrations connected`).
+
 ### Feedback
 
 ```bash
