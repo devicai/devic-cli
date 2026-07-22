@@ -1,4 +1,6 @@
-node_modules/
+# No trailing slash: also ignores a `node_modules` symlink, which a slash-only
+# pattern misses (that is how one was committed in 0.18.1).
+node_modules
 dist/
 *.tsbuildinfo
 .DS_Store
