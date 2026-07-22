@@ -771,4 +771,123 @@ export class DevicApiClient {
       method: 'DELETE',
     });
   }
+
+  // ── Integrations (connected-app catalogue) ──
+
+  async listIntegrations(opts?: {
+    limit?: number;
+    cursor?: string;
+    search?: string;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    if (opts?.search) params.set('search', opts.search);
+    const q = params.toString();
+    return this.request(`/api/v1/integrations${q ? `?${q}` : ''}`);
+  }
+
+  async getIntegration(app: string): Promise<unknown> {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(app)}`);
+  }
+
+  async listIntegrationTriggers(
+    app: string,
+    opts?: { limit?: number; cursor?: string; search?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    if (opts?.search) params.set('search', opts.search);
+    const q = params.toString();
+    return this.request(
+      `/api/v1/integrations/${encodeURIComponent(app)}/triggers${q ? `?${q}` : ''}`,
+    );
+  }
+
+  async getIntegrationTrigger(app: string, slug: string): Promise<unknown> {
+    return this.request(
+      `/api/v1/integrations/${encodeURIComponent(app)}/triggers/${encodeURIComponent(slug)}`,
+    );
+  }
+
+  async connectIntegration(app: string): Promise<{ authorizationUrl: string }> {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(app)}/connect`, {
+      method: 'POST',
+      body: '{}',
+    });
+  }
+
+  async integrationConnectionStatus(
+    app: string,
+  ): Promise<{ connected: boolean }> {
+    return this.request(
+      `/api/v1/integrations/${encodeURIComponent(app)}/connection-status`,
+    );
+  }
+
+  async createIntegrationServer(
+    app: string,
+    body: { name?: string; tools?: string[] },
+  ): Promise<ToolServerDto> {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(app)}/servers`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  // ── Triggers (subscriptions) ──
+
+  async listTriggers(opts?: {
+    toolServerId?: string;
+    agentId?: string;
+    assistantId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.toolServerId) params.set('toolServerId', opts.toolServerId);
+    if (opts?.agentId) params.set('agentId', opts.agentId);
+    if (opts?.assistantId) params.set('assistantId', opts.assistantId);
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    const q = params.toString();
+    return this.request(`/api/v1/triggers${q ? `?${q}` : ''}`);
+  }
+
+  async getTrigger(id: string): Promise<unknown> {
+    return this.request(`/api/v1/triggers/${id}`);
+  }
+
+  async createTrigger(body: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/triggers`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateTrigger(
+    id: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/triggers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteTrigger(id: string): Promise<unknown> {
+    return this.request(`/api/v1/triggers/${id}`, { method: 'DELETE' });
+  }
+
+  async listTriggerEvents(
+    id: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    const q = params.toString();
+    return this.request(`/api/v1/triggers/${id}/events${q ? `?${q}` : ''}`);
+  }
 }
