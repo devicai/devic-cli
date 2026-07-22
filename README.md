@@ -129,6 +129,7 @@ devic agents costs summary <agentId>
 ```bash
 # CRUD
 devic tool-servers list
+devic tool-servers list --project my-project     # _id, identifier, or name
 devic tool-servers get <id>
 devic tool-servers create --name "My API" --url https://api.example.com
 devic tool-servers create --from-json server-config.json
@@ -148,6 +149,28 @@ devic tool-servers tools update <serverId> <toolName> --from-json updates.json
 devic tool-servers tools delete <serverId> <toolName>
 devic tool-servers tools test <serverId> <toolName> --from-json '{"city":"London"}'
 ```
+
+The `type` column tells the three kinds apart:
+
+| Type | Where its tools come from | `target` column |
+|---|---|---|
+| `http` | Tool definitions you wrote, called against a base URL | the URL |
+| `mcp` | An MCP server | the URL |
+| `integration` | An app connected in Devic (Gmail, Drive, HubSpot…) | the app, plus `(not connected)` when no account is linked |
+
+An integration has no URL and no stored definition — its tools are resolved from
+the connected app. `tools list` returns the ones the server exposes; add
+`--available` to browse everything the app offers, with `enabled` marking which
+of them this server uses:
+
+```bash
+devic tool-servers tools list <serverId> --available --limit 50
+devic tool-servers tools list <serverId> --available --cursor <nextCursor>
+```
+
+Credentials come back masked (`••••••••`). Sending a masked value back in an
+update keeps the stored secret, so the usual `get` → edit → `update` round trip
+is safe; send a real value to change it.
 
 ### Feedback
 

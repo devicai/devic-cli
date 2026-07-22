@@ -301,6 +301,22 @@ export interface AgentDto {
   creationTimestampMs?: number;
 }
 
+/**
+ * How a tool server reaches its tools. An integration has no `url` and no
+ * `identifier` — it runs against a connected app — so without this it was
+ * indistinguishable from a half-configured HTTP server.
+ */
+export type ToolServerType = 'http' | 'mcp' | 'integration';
+
+/** The connected app behind an `integration` server. */
+export interface ToolServerIntegration {
+  app: string;
+  apps: string[];
+  connected: boolean;
+  /** Absent means the server exposes every tool the app has. */
+  enabledToolCount?: number;
+}
+
 export interface ToolServerDto {
   _id?: string;
   name: string;
@@ -313,6 +329,8 @@ export interface ToolServerDto {
   authenticationConfig?: Record<string, unknown>;
   mcpType?: boolean;
   imageUrl?: string;
+  type?: ToolServerType;
+  integration?: ToolServerIntegration;
 }
 
 export interface ToolDefinition {
