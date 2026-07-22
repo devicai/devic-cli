@@ -836,6 +836,34 @@ export class DevicApiClient {
     });
   }
 
+  async listConnectedIntegrations(): Promise<unknown> {
+    return this.request(`/api/v1/integrations/connected`);
+  }
+
+  async listIntegrationTools(
+    id: string,
+    opts?: { available?: boolean; limit?: number; cursor?: string },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.available) params.set('available', 'true');
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const q = params.toString();
+    return this.request(
+      `/api/v1/integrations/servers/${id}/tools${q ? `?${q}` : ''}`,
+    );
+  }
+
+  async updateIntegrationTools(
+    id: string,
+    body: { enable?: string[]; disable?: string[]; all?: boolean },
+  ): Promise<unknown> {
+    return this.request(`/api/v1/integrations/servers/${id}/tools`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  }
+
   // ── Triggers (subscriptions) ──
 
   async listTriggers(opts?: {
