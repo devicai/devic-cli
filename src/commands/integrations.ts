@@ -127,7 +127,19 @@ export function registerIntegrationCommands(program: Command): void {
         return client.listConnectedIntegrations();
       }, (d) => {
         const items = (Array.isArray(d) ? d : []) as any[];
-        if (items.length === 0) return '_No integrations connected yet._';
+        if (items.length === 0) {
+          return [
+            '_No integrations connected yet._',
+            '',
+            md.info(
+              'This lists built integration tool servers only. An account you just ' +
+                'authorized in the browser will not appear here until you build its ' +
+                'server: ' +
+                md.code('devic integrations connect <app> --finalize') +
+                '.',
+            ),
+          ].join('\n');
+        }
         return [
           md.h(2, 'Connected integrations'),
           '',
@@ -280,7 +292,24 @@ export function registerIntegrationCommands(program: Command): void {
         const { authorizationUrl } = await client.connectIntegration(appSlug);
 
         if (!o.wait) {
-          return { _action: 'url', app: appSlug, authorizationUrl };
+          // The tool server is NOT created yet — authorizing the URL only links
+          // the account; a separate build step turns it into an integration.
+          // Spell that out in the machine-readable payload too, not just the
+          // human hint below: non-interactive callers (agents) only ever see
+          // this object, and without it they stop at the URL and never finalize.
+          return {
+            _action: 'url',
+            app: appSlug,
+            authorizationUrl,
+            status: 'authorization_required',
+            toolServerCreated: false,
+            nextStep: `Once the account is authorized in the browser, run: devic integrations connect ${appSlug} --finalize`,
+            note:
+              'Authorizing the URL does NOT create the tool server or activate the ' +
+              'integration. Finalize afterwards (or re-run with --wait to authorize ' +
+              'and build in one step). Until the server is built the account will ' +
+              'not appear in `devic integrations connected`.',
+          };
         }
 
         // Poll for the account to go active, then build the server.
@@ -314,9 +343,13 @@ export function registerIntegrationCommands(program: Command): void {
           '',
           r.authorizationUrl,
           '',
-          `_Once authorized, build the tool server with_ ${md.code(
+          `_The tool server is not created yet._ Once authorized, build it with ${md.code(
             `devic integrations connect ${r.app} --finalize`,
-          )}_, or re-run with_ ${md.code('--wait')} _to do it automatically._`,
+          )}, or re-run with ${md.code('--wait')} to do it automatically.`,
+          '',
+          `_Until then the account will not show in_ ${md.code(
+            'devic integrations connected',
+          )}.`,
         ].join('\n');
       }),
     );
