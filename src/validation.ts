@@ -90,6 +90,7 @@ const AGENT_SCHEMA: Schema = {
     'agentNotificationConfig',
     'evaluationConfig',
     'subAgentConfig',
+    'periodicExecution',
     'disabled',
     'archived',
   ],
@@ -451,6 +452,60 @@ const SCHEMAS: Record<EntityKind, Schema> = {
   project: PROJECT_SCHEMA,
 };
 
+// ── Value-type checks ────────────────────────────────────────────────────────
+
+/**
+ * Where the system prompt string lives for each entity that has one. The value
+ * is canonically a plain string; a hand-built payload (often from an LLM
+ * copilot) sometimes wraps it in an array of `{ name, content }` objects, which
+ * the API stores verbatim and which then crashes the dashboard agent page
+ * (`presets.split is not a function`). We catch that here, before the request.
+ */
+const PRESETS_PATH: Partial<Record<EntityKind, string>> = {
+  agent: 'assistantSpecialization.presets',
+  assistant: 'presets',
+};
+
+function getNested(obj: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, part) => {
+    if (acc && typeof acc === 'object' && !Array.isArray(acc)) {
+      return (acc as Record<string, unknown>)[part];
+    }
+    return undefined;
+  }, obj);
+}
+
+/**
+ * Type-checks known fields whose *value* shape matters (not just the key name).
+ * Currently: the system prompt (`presets`) must be a plain string.
+ */
+export function inspectValueTypes(
+  entity: EntityKind,
+  payload: Record<string, unknown>,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  const presetsPath = PRESETS_PATH[entity];
+  if (presetsPath) {
+    const value = getNested(payload, presetsPath);
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      const kind = Array.isArray(value) ? 'array' : typeof value;
+      const actual = /^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`;
+      issues.push({
+        key: presetsPath,
+        suggestion:
+          `The system prompt must be a plain string, but got ${actual}. ` +
+          `Pass it as a single string, e.g. \`"${presetsPath}": "You are ..."\`. ` +
+          `An array of \`{ name, content }\` objects is NOT a valid shape — it is ` +
+          `stored verbatim and breaks the dashboard.`,
+        confidence: 'high',
+      });
+    }
+  }
+
+  return issues;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export interface ValidationIssue {
@@ -516,13 +571,16 @@ export function assertValidPayload(
   if (opts.skip) return;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
 
-  const issues = inspectPayload(entity, payload);
+  const issues = [
+    ...inspectPayload(entity, payload),
+    ...inspectValueTypes(entity, payload),
+  ];
   if (issues.length === 0) return;
 
   const schema = SCHEMAS[entity];
   const lines: string[] = [];
   lines.push(
-    `Invalid ${schema.label} payload — found ${issues.length} unexpected field${issues.length === 1 ? '' : 's'} at the top level:`,
+    `Invalid ${schema.label} payload — found ${issues.length} problem${issues.length === 1 ? '' : 's'}:`,
     '',
   );
   for (const issue of issues) {
