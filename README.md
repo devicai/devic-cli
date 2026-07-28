@@ -197,6 +197,10 @@ devic integrations tools enable <integrationId> GMAIL_SEND_EMAIL GMAIL_CREATE_EM
 devic integrations tools disable <integrationId> GMAIL_SEND_EMAIL
 devic integrations tools enable <integrationId> --all       # expose every tool the app has
 
+# Run one of its tools once, against the connected account (a REAL call)
+devic integrations tools test <integrationId> GMAIL_GET_PROFILE
+echo '{"max_results":3}' | devic integrations tools test <integrationId> GMAIL_FETCH_EMAILS --from-json -
+
 # Triggers: start an agent/assistant from an app event
 devic triggers list --agent <agentId>
 devic triggers create --tool-server <integrationId> --agent <agentId> \
@@ -206,6 +210,13 @@ devic triggers events <triggerId>
 
 `integrations` is for connected apps; `tool-servers` stays for MCP and custom
 servers. An integration is addressed by its id (from `integrations connected`).
+That split includes testing: `tool-servers tools test` runs a stored tool
+definition, which an integration does not have.
+
+`tools test` goes through the same path the engine uses at runtime, so it
+answers whether an agent will get that result — and there is no sandbox behind
+it. Validate a connection with read-only tools (`*_GET_*`, `*_LIST_*`,
+`*_FETCH_*`); `GMAIL_SEND_EMAIL` really sends the email.
 
 ### Feedback
 

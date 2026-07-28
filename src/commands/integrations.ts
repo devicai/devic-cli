@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { createClient, withAction } from '../helpers.js';
+import { createClient, readJsonInput, withAction } from '../helpers.js';
 import { md } from '../output.js';
 import { DevicCliError } from '../errors.js';
 
@@ -39,6 +39,38 @@ function formatIntegrationTools(d: unknown): string {
   if (data.nextCursor) {
     lines.push(
       md.info(`More — pass ${md.code(`--cursor ${data.nextCursor}`)} for the next page.`),
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Renders a tool run. The app's own answer is printed verbatim: reading it is
+ * the point of the command, and a summarised payload would hide exactly the
+ * field the caller is checking.
+ */
+function formatToolTest(d: unknown): string {
+  const r = d as any;
+  const lines = [
+    md.h(2, r.success ? 'Tool ran' : 'Tool failed'),
+    '',
+    `**Tool:** ${md.code(r.tool ?? '-')}${r.app ? ` (${r.app})` : ''}`,
+  ];
+  if (r.executionTimeMs != null) lines.push(`**Took:** ${r.executionTimeMs}ms`);
+  if (r.error) lines.push(`**Error:** ${r.error}`);
+  if (r.requiresUserAction) {
+    lines.push(
+      '',
+      md.info(
+        'The connection itself is the problem, not the arguments — reconnect the app.',
+      ),
+    );
+  }
+  if (r.data != null) {
+    lines.push(
+      '',
+      md.h(3, 'Response'),
+      md.codeBlock(JSON.stringify(r.data, null, 2), 'json'),
     );
   }
   return lines.join('\n');
@@ -408,5 +440,30 @@ export function registerIntegrationCommands(program: Command): void {
           disable: slugs as string[],
         });
       }, (d) => [md.success('Tools updated.'), '', formatIntegrationTools(d)].join('\n')),
+    );
+
+  tools
+    .command('test <id> <tool>')
+    .description(
+      'Run one of the integration’s tools once against the connected account. ' +
+        'This is a real call on real data — prefer read-only tools.',
+    )
+    .option(
+      '--from-json <file>',
+      'Arguments for the tool, as JSON (- for stdin). Omit for a tool that takes none.',
+    )
+    .action(
+      withAction(async (id: unknown, tool: unknown, opts: unknown) => {
+        const o = opts as { fromJson?: string };
+        const parameters = o.fromJson
+          ? await readJsonInput(o.fromJson)
+          : undefined;
+        const client = createClient();
+        return client.testIntegrationTool(
+          id as string,
+          tool as string,
+          parameters,
+        );
+      }, (d) => formatToolTest(d)),
     );
 }

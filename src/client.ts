@@ -864,6 +864,19 @@ export class DevicApiClient {
     });
   }
 
+  async testIntegrationTool(
+    id: string,
+    toolName: string,
+    parameters?: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/integrations/servers/${id}/tools/${encodeURIComponent(
+        toolName,
+      )}/test`,
+      { method: 'POST', body: JSON.stringify({ parameters: parameters ?? {} }) },
+    );
+  }
+
   // ── Triggers (subscriptions) ──
 
   async listTriggers(opts?: {
