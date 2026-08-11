@@ -31,6 +31,16 @@ interface OutputErrorShape {
   statusCode?: number;
   field?: string;
   invalidSubagents?: InvalidSubagentRef[];
+  /** `INTEGRATION_SETUP_REQUIRED`: what the app is still waiting for. */
+  authScheme?: string;
+  stage?: 'app' | 'account';
+  missingFields?: Array<{
+    name: string;
+    label?: string;
+    secret?: boolean;
+    description?: string;
+  }>;
+  guideUrl?: string;
 }
 
 export function outputError(error: OutputErrorShape): void {
@@ -47,6 +57,34 @@ export function outputError(error: OutputErrorShape): void {
     process.stderr.write(`${error.error}\n`);
     process.stderr.write(`\nCode: \`${error.code}\`\n`);
     if (error.statusCode) process.stderr.write(`Status: ${error.statusCode}\n`);
+    return;
+  }
+
+  // Same idea for an app that cannot be connected until credentials are given:
+  // most of the catalogue authenticates with something Devic does not hold, so
+  // this is a setup step rather than a failure — and the flags to run next are
+  // printed, because a caller that only reads "400" gets stuck here.
+  if (error.code === 'INTEGRATION_SETUP_REQUIRED' && error.missingFields?.length) {
+    const flag = error.stage === 'app' ? '--app-field' : '--field';
+    process.stderr.write(`\n${md.warn('This app needs credentials')}\n\n`);
+    process.stderr.write(`${error.error}\n\n`);
+    for (const f of error.missingFields) {
+      process.stderr.write(
+        `- \`${f.name}\`${f.label && f.label !== f.name ? ` — ${f.label}` : ''}` +
+          `${f.description ? `: ${f.description}` : ''}\n`,
+      );
+    }
+    process.stderr.write(
+      `\nPass each one as \`${flag} <name>=<value>\`` +
+        (error.missingFields.some((f) => f.secret)
+          ? `, or \`${flag}-env <name>=<ENV_VAR>\` to keep secrets out of shell history`
+          : '') +
+        '.\n',
+    );
+    if (error.guideUrl) {
+      process.stderr.write(`Provider guide: ${error.guideUrl}\n`);
+    }
+    process.stderr.write(`\nCode: \`${error.code}\`\n`);
     return;
   }
 

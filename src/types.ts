@@ -198,6 +198,9 @@ export interface ApiError {
   field?: string;
   /** Populated for `INVALID_SUBAGENTS`: the subagents that failed validation. */
   invalidSubagents?: InvalidSubagentRef[];
+  /** Populated for `INTEGRATION_SETUP_REQUIRED`: what the app still needs, so
+   *  the command can print the exact flags to pass rather than only "400". */
+  setupRequired?: IntegrationSetupRequired;
 }
 
 export interface FeedbackSubmission {
@@ -315,6 +318,51 @@ export interface ToolServerIntegration {
   connected: boolean;
   /** Absent means the server exposes every tool the app has. */
   enabledToolCount?: number;
+}
+
+/** One value an app asks for before it can be connected. */
+export interface IntegrationAuthField {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  description?: string;
+  /** Prefilled by the provider — usually an endpoint most accounts keep. */
+  default?: string;
+  /** A credential: keep it out of terminal history and logs. */
+  secret: boolean;
+}
+
+/**
+ * One way of connecting an app.
+ *
+ * `appFields` are the workspace's own OAuth application, registered once;
+ * `accountFields` are what the account being connected supplies. Only a
+ * minority of the catalog is `composioManaged` — the rest need one or both.
+ */
+export interface IntegrationAuthScheme {
+  mode: string;
+  composioManaged: boolean;
+  /** Connecting returns a URL to open in a browser. */
+  redirect: boolean;
+  appFields: IntegrationAuthField[];
+  accountFields: IntegrationAuthField[];
+  guideUrl?: string;
+}
+
+export interface IntegrationAuth {
+  schemes: IntegrationAuthScheme[];
+}
+
+/** The 400 body naming what an app still needs. */
+export interface IntegrationSetupRequired {
+  code: 'INTEGRATION_SETUP_REQUIRED';
+  message: string;
+  toolkit: string;
+  authScheme: string;
+  stage: 'app' | 'account';
+  fields: IntegrationAuthField[];
+  guideUrl?: string;
 }
 
 export interface ToolServerDto {
