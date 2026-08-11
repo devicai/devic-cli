@@ -15,6 +15,7 @@ import type {
   ToolServerDto,
   ToolDefinition,
   ApiError,
+  IntegrationAuth,
   SkillCatalogItem,
   SkillCatalogPage,
   SkillTree,
@@ -118,6 +119,8 @@ export class DevicApiClient {
             invalidSubagents: Array.isArray(body?.invalidSubagents)
               ? body.invalidSubagents
               : undefined,
+            setupRequired:
+              body?.code === 'INTEGRATION_SETUP_REQUIRED' ? body : undefined,
           };
         }
       } catch {
@@ -811,10 +814,29 @@ export class DevicApiClient {
     );
   }
 
-  async connectIntegration(app: string): Promise<{ authorizationUrl: string }> {
+  /** How an app can be connected, and what each way asks for. */
+  async integrationAuth(app: string): Promise<IntegrationAuth> {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(app)}/auth`);
+  }
+
+  /**
+   * Connects an account. `connected` is true when the app took a credential
+   * and needed no browser; otherwise `authorizationUrl` must be opened.
+   *
+   * Throws a 400 carrying `INTEGRATION_SETUP_REQUIRED` when the app needs
+   * credentials that were not sent — its `fields` say which.
+   */
+  async connectIntegration(
+    app: string,
+    body: {
+      authScheme?: string;
+      appCredentials?: Record<string, string>;
+      accountFields?: Record<string, string>;
+    } = {},
+  ): Promise<{ connected: boolean; authorizationUrl?: string }> {
     return this.request(`/api/v1/integrations/${encodeURIComponent(app)}/connect`, {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify(body),
     });
   }
 

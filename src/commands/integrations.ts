@@ -18,6 +18,87 @@ const parseToolList = (value?: string): string[] | undefined =>
     ? value.split(',').map((t) => t.trim()).filter(Boolean)
     : undefined;
 
+/**
+ * Collects repeated `--field name=value` flags.
+ *
+ * Splits on the first `=` only: an API key is base64 or a JWT often enough that
+ * splitting on every one would corrupt the credential rather than reject it.
+ */
+const collectFields = (
+  pair: string,
+  previous: Record<string, string> = {},
+): Record<string, string> => {
+  const at = pair.indexOf('=');
+  if (at < 1) {
+    throw new DevicCliError(
+      `Expected name=value, got "${pair}".`,
+      'INVALID_FIELD',
+    );
+  }
+  return { ...previous, [pair.slice(0, at)]: pair.slice(at + 1) };
+};
+
+/**
+ * Credential values from the flags, the environment, or a JSON file.
+ *
+ * The environment and file forms exist because the flag form writes secrets
+ * into shell history: `--field-env generic_api_key=PPLX_KEY` reads the value
+ * from `$PPLX_KEY`, and `--fields-json` takes `{"name":"value"}` from a file
+ * or stdin. All three merge, later sources winning.
+ */
+async function resolveFields(opts: {
+  field?: Record<string, string>;
+  fieldEnv?: Record<string, string>;
+  fieldsJson?: string;
+}): Promise<Record<string, string> | undefined> {
+  const values: Record<string, string> = { ...(opts.field ?? {}) };
+
+  for (const [name, envVar] of Object.entries(opts.fieldEnv ?? {})) {
+    const value = process.env[envVar];
+    if (value === undefined) {
+      throw new DevicCliError(
+        `$${envVar} is not set (needed for "${name}").`,
+        'MISSING_ENV',
+      );
+    }
+    values[name] = value;
+  }
+
+  if (opts.fieldsJson) {
+    const parsed = await readJsonInput(opts.fieldsJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new DevicCliError(
+        '--fields-json must contain a JSON object of name/value pairs.',
+        'INVALID_FIELDS_JSON',
+      );
+    }
+    for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+      values[name] = String(value);
+    }
+  }
+
+  return Object.keys(values).length ? values : undefined;
+}
+
+/** Renders one scheme's fields as a table, or a note when it asks for none. */
+function formatAuthFields(fields: any[], caption: string): string[] {
+  if (!fields.length) return [];
+  return [
+    '',
+    md.h(4, caption),
+    '',
+    md.table(
+      fields.map((f: any) => ({
+        field: f.name,
+        required: f.required ? 'yes' : 'no',
+        secret: f.secret ? 'yes' : '',
+        description: (f.description ?? f.label ?? '-').slice(0, 60),
+      })),
+      { columns: ['field', 'required', 'secret', 'description'] },
+    ),
+  ];
+}
+
 /** Renders a `{tools:[{function,enabled}], total, nextCursor?}` payload. */
 function formatIntegrationTools(d: unknown): string {
   const data = d as any;
@@ -288,6 +369,45 @@ export function registerIntegrationCommands(program: Command): void {
       }),
     );
 
+  // integrations auth <app>
+  integrations
+    .command('auth <app>')
+    .description('How an app can be connected, and what it asks for')
+    .action(
+      withAction(async (app: unknown) => {
+        const client = createClient();
+        return client.integrationAuth(app as string);
+      }, (d) => {
+        const schemes = (d as any).schemes ?? [];
+        if (!schemes.length) {
+          return '_This app needs no account — its tools work without connecting._';
+        }
+        const lines = [md.h(2, 'Ways to connect'), ''];
+        for (const s of schemes) {
+          lines.push(
+            md.h(3, s.mode),
+            '',
+            s.composioManaged
+              ? '- Credentials are held for you: nothing to register.'
+              : '- Needs credentials of your own.',
+            `- ${s.redirect ? 'Authorises in a browser.' : 'Connects without a browser.'}`,
+          );
+          lines.push(
+            ...formatAuthFields(
+              s.appFields,
+              'Your application (--app-field, once per workspace)',
+            ),
+          );
+          lines.push(
+            ...formatAuthFields(s.accountFields, 'This account (--field)'),
+          );
+          if (s.guideUrl) lines.push('', md.info(`Provider guide: ${s.guideUrl}`));
+          lines.push('');
+        }
+        return lines.join('\n');
+      }),
+    );
+
   // integrations connect <app>
   integrations
     .command('connect <app>')
@@ -298,6 +418,32 @@ export function registerIntegrationCommands(program: Command): void {
     .option('--tools <a,b,c>', 'Tools to expose (default: all of the app’s)')
     .option('--interval <s>', 'Poll interval in seconds for --wait', '4')
     .option('--timeout <s>', 'Give up after this many seconds for --wait', '180')
+    .option(
+      '--auth-scheme <mode>',
+      'Which way to connect (see `devic integrations auth <app>`)',
+    )
+    .option(
+      '--field <name=value...>',
+      'A value this account supplies, e.g. --field generic_api_key=pplx-…',
+      collectFields,
+    )
+    .option(
+      '--field-env <name=ENV_VAR...>',
+      'Same, read from the environment so secrets stay out of shell history',
+      collectFields,
+    )
+    .option('--fields-json <file>', 'Account values as a JSON object ("-" for stdin)')
+    .option(
+      '--app-field <name=value...>',
+      'A credential of your own OAuth application, e.g. --app-field client_id=…',
+      collectFields,
+    )
+    .option(
+      '--app-field-env <name=ENV_VAR...>',
+      'Same, read from the environment',
+      collectFields,
+    )
+    .option('--app-fields-json <file>', 'Application credentials as JSON ("-" for stdin)')
     .action(
       withAction(async (app: unknown, opts: unknown) => {
         const o = opts as {
@@ -307,6 +453,13 @@ export function registerIntegrationCommands(program: Command): void {
           tools?: string;
           interval?: string;
           timeout?: string;
+          authScheme?: string;
+          field?: Record<string, string>;
+          fieldEnv?: Record<string, string>;
+          fieldsJson?: string;
+          appField?: Record<string, string>;
+          appFieldEnv?: Record<string, string>;
+          appFieldsJson?: string;
         };
         const client = createClient();
         const appSlug = app as string;
@@ -321,7 +474,34 @@ export function registerIntegrationCommands(program: Command): void {
           return { _action: 'server', server };
         }
 
-        const { authorizationUrl } = await client.connectIntegration(appSlug);
+        const { connected, authorizationUrl } = await client.connectIntegration(
+          appSlug,
+          {
+            authScheme: o.authScheme,
+            accountFields: await resolveFields({
+              field: o.field,
+              fieldEnv: o.fieldEnv,
+              fieldsJson: o.fieldsJson,
+            }),
+            appCredentials: await resolveFields({
+              field: o.appField,
+              fieldEnv: o.appFieldEnv,
+              fieldsJson: o.appFieldsJson,
+            }),
+          },
+        );
+
+        // Connected outright: the credential supplied *is* the account, so
+        // there is nothing to authorize and nothing to wait for. Build the
+        // server straight away rather than sending the caller round the
+        // finalize loop for a step that already happened.
+        if (connected) {
+          const server = await client.createIntegrationServer(appSlug, {
+            name: o.name,
+            tools,
+          });
+          return { _action: 'server', server };
+        }
 
         if (!o.wait) {
           // The tool server is NOT created yet — authorizing the URL only links
