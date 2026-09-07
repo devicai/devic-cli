@@ -8,6 +8,7 @@ import {
   readAndValidateJson,
   addSkipValidationOption,
   resolveProjectId,
+  resolveEnvironmentId,
 } from '../helpers.js';
 import { pollThread } from '../polling.js';
 import { md, output } from '../output.js';
@@ -106,6 +107,106 @@ function summarizeApproval(result: unknown, action: 'approved' | 'rejected'): Re
   };
 }
 
+
+/**
+ * Build `periodicExecution` from the scheduling flags.
+ *
+ * Three ways to say when, and the backend takes exactly one: a cron
+ * expression, a time of day (optionally restricted to weekdays), or an
+ * interval of N days from an anchor date — which cron genuinely cannot express,
+ * because its day-of-month restarts every month.
+ *
+ * Returns undefined when no flag was given, so a plain `--name` update does not
+ * silently rewrite an existing schedule.
+ */
+function buildPeriodicExecution(o: Record<string, any>): Record<string, unknown> | undefined {
+  if (o.schedule === false) return { enabled: false };
+
+  const ways = [o.cron, o.scheduleAt, o.everyDays].filter((v) => v != null);
+  if (ways.length === 0) return undefined;
+  if (ways.length > 1) {
+    throw new Error(
+      'Pass only one of --cron, --schedule-at or --every-days: they are three ways ' +
+        'of saying when, and the backend takes exactly one.',
+    );
+  }
+
+  const timezone = o.timezone ?? 'UTC';
+
+  if (o.cron) return { enabled: true, cronExpression: o.cron };
+
+  if (o.scheduleAt) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(o.scheduleAt));
+    if (!m) throw new Error(`--schedule-at expects HH:MM, got "${o.scheduleAt}"`);
+    const hour = parseInt(m[1], 10);
+    const minute = parseInt(m[2], 10);
+    if (hour > 23 || minute > 59) {
+      throw new Error(`--schedule-at "${o.scheduleAt}" is not a valid time of day`);
+    }
+
+    const periodic: Record<string, unknown> = {
+      enabled: true,
+      specificHour: { hour, minute, timezone },
+    };
+    if (o.days) {
+      const NAMES = [
+        'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+      ];
+      const wanted = String(o.days)
+        .split(',')
+        .map((d: string) => d.trim().toLowerCase())
+        .filter(Boolean);
+      const unknown = wanted.filter((d: string) => !NAMES.includes(d));
+      if (unknown.length) {
+        throw new Error(
+          `--days does not know "${unknown.join(', ')}". Use ${NAMES.join(', ')}.`,
+        );
+      }
+      periodic.executionDays = Object.fromEntries(
+        NAMES.map((n) => [n, wanted.includes(n)]),
+      );
+    }
+    return periodic;
+  }
+
+  // --every-days
+  const days = parseInt(String(o.everyDays), 10);
+  if (!Number.isInteger(days) || days < 1) {
+    throw new Error(`--every-days expects a whole number of days >= 1, got "${o.everyDays}"`);
+  }
+  const at = o.at ?? '00:00';
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(at));
+  if (!m) throw new Error(`--at expects HH:MM, got "${at}"`);
+  const startDate = o.startDate ?? new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate))) {
+    throw new Error(`--start-date expects YYYY-MM-DD, got "${startDate}"`);
+  }
+  return {
+    enabled: true,
+    intervalSchedule: {
+      days,
+      hour: parseInt(m[1], 10),
+      minute: parseInt(m[2], 10),
+      timezone,
+      startDate,
+    },
+  };
+}
+
+/** The scheduling and environment flags, shared by `create` and `update`. */
+function addAgentWiringOptions(cmd: any): any {
+  return cmd
+    .option('--cron <expr>', 'Run on a 5-field cron expression, e.g. "0 7 * * 1-5"')
+    .option('--schedule-at <HH:MM>', 'Run daily at this time of day')
+    .option('--days <list>', 'With --schedule-at, restrict to these weekdays (monday,friday)')
+    .option('--every-days <n>', 'Run every N days from an anchor date')
+    .option('--at <HH:MM>', 'With --every-days, the time of day (default 00:00)')
+    .option('--start-date <YYYY-MM-DD>', 'With --every-days, the anchor date (default today)')
+    .option('--timezone <tz>', 'IANA timezone for the schedule (default UTC)')
+    .option('--no-schedule', 'Turn periodic execution off')
+    .option('--environment <environment>', 'Environment to connect the agent to (_id or name; "null" to disconnect)');
+}
+
 export function registerAgentCommands(program: Command): void {
   const agents = program.command('agents').description('Manage agents and threads');
 
@@ -162,22 +263,31 @@ export function registerAgentCommands(program: Command): void {
 
   // agents create
   addSkipValidationOption(
-    agents
-      .command('create')
+    addAgentWiringOptions(
+      agents
+        .command('create'),
+    )
       .description('Create a new agent')
       .option('--name <name>', 'Agent name')
       .option('--description <desc>', 'Agent description')
       .option('--project <project>', 'Project this agent belongs to (_id, identifier, or name)')
       .option('--from-json <file>', 'Read full agent config from JSON file (- for stdin)'),
-  ).action(
+  )
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Scheduling:',
+        '  devic agents create --name "Daily report" --cron "0 7 * * 1-5" --timezone Europe/Madrid',
+        '  devic agents create --name "Weekly" --schedule-at 09:00 --days monday --timezone Europe/Madrid',
+        '  devic agents create --name "Fortnightly" --every-days 14 --at 08:30 --start-date 2026-01-06',
+        '',
+        'The three are mutually exclusive. --every-days exists because cron cannot',
+        'express a true N-day interval: its day-of-month restarts every month.',
+      ].join('\n'),
+    ).action(
       withAction(async (opts: unknown) => {
-        const o = opts as {
-          name?: string;
-          description?: string;
-          project?: string;
-          fromJson?: string;
-          skipValidation?: boolean;
-        };
+        const o = opts as Record<string, any>;
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
@@ -189,6 +299,16 @@ export function registerAgentCommands(program: Command): void {
           if (o.description) data.description = o.description;
           if (o.project) data.projectId = await resolveProjectId(client, o.project);
         }
+        // Flags win over the JSON: they are the more specific thing the caller
+        // just typed. Absent flags leave whatever the JSON carried alone.
+        const periodicExecution = buildPeriodicExecution(o);
+        if (periodicExecution) data.periodicExecution = periodicExecution;
+        if (o.environment) {
+          data.environmentId =
+            o.environment === 'null'
+              ? null
+              : await resolveEnvironmentId(client, o.environment);
+        }
         return client.createAgent(data);
       }, (d) => {
         const a = d as AgentDto;
@@ -198,8 +318,10 @@ export function registerAgentCommands(program: Command): void {
 
   // agents update <agentId>
   addSkipValidationOption(
-    agents
-      .command('update <agentId>')
+    addAgentWiringOptions(
+      agents
+        .command('update <agentId>'),
+    )
       .description('Update an agent')
       .option('--name <name>', 'Agent name')
       .option('--description <desc>', 'Agent description')
@@ -207,13 +329,7 @@ export function registerAgentCommands(program: Command): void {
       .option('--from-json <file>', 'Read update payload from JSON file (- for stdin)'),
   ).action(
       withAction(async (agentId: unknown, opts: unknown) => {
-        const o = opts as {
-          name?: string;
-          description?: string;
-          project?: string;
-          fromJson?: string;
-          skipValidation?: boolean;
-        };
+        const o = opts as Record<string, any>;
         const client = createClient();
         let data: Record<string, unknown>;
         if (o.fromJson) {
@@ -224,6 +340,14 @@ export function registerAgentCommands(program: Command): void {
           if (o.description) data.description = o.description;
           if (o.project !== undefined)
             data.projectId = o.project === 'null' ? null : await resolveProjectId(client, o.project);
+        }
+        const periodicExecution = buildPeriodicExecution(o);
+        if (periodicExecution) data.periodicExecution = periodicExecution;
+        if (o.environment) {
+          data.environmentId =
+            o.environment === 'null'
+              ? null
+              : await resolveEnvironmentId(client, o.environment);
         }
         return client.updateAgent(agentId as string, data);
       }, (d) => {

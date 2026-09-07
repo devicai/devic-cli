@@ -15,7 +15,8 @@ export type EntityKind =
   | 'tool-server'
   | 'tool-definition'
   | 'document'
-  | 'project';
+  | 'project'
+  | 'environment';
 
 interface Alias {
   /** What the user probably meant, formatted for a CLI message. */
@@ -91,6 +92,8 @@ const AGENT_SCHEMA: Schema = {
     'evaluationConfig',
     'subAgentConfig',
     'periodicExecution',
+    'sandboxPreprovision',
+    'environmentId',
     'disabled',
     'archived',
   ],
@@ -443,6 +446,69 @@ const PROJECT_SCHEMA: Schema = {
   ],
 };
 
+const ENVIRONMENT_SCHEMA: Schema = {
+  label: 'environment',
+  allowed: [
+    '_id',
+    'name',
+    'description',
+    'projectId',
+    'imgUrl',
+    'availableToolsGroupsUids',
+    'knowledgeDocumentIds',
+    'knowledgeFolderIds',
+    'knowledgeSkills',
+    'envVars',
+    'sandboxConfig',
+    'tenantIntegrations',
+  ],
+  aliases: {
+    project: PROJECT_ID_HINT,
+    project_id: PROJECT_ID_HINT,
+    projectid: PROJECT_ID_HINT,
+    env: {
+      suggestion:
+        'Use `envVars` (a flat `{ "KEY": "value" }` map). Values are encrypted at rest and read back masked.',
+    },
+    environmentVariables: { suggestion: 'Use `envVars`.' },
+    variables: { suggestion: 'Use `envVars`.' },
+    secrets: { suggestion: 'Use `envVars` — they are encrypted at rest.' },
+    sandbox: { suggestion: 'Use `sandboxConfig`.' },
+    runtime: {
+      suggestion:
+        'Nested: `{ "sandboxConfig": { "runtime": "node24" } }`.',
+    },
+    initScript: {
+      suggestion:
+        'Nested: `{ "sandboxConfig": { "initScript": "..." } }`.',
+    },
+    snapshotEnabled: {
+      suggestion:
+        'Nested: `{ "sandboxConfig": { "snapshotEnabled": true } }`.',
+    },
+    autoExtend: {
+      suggestion: 'Nested: `{ "sandboxConfig": { "autoExtend": true } }`.',
+    },
+    memoryMib: {
+      suggestion: 'Nested: `{ "sandboxConfig": { "memoryMib": 2048 } }`.',
+    },
+    snapshotId: {
+      suggestion:
+        'The snapshot id is managed by the backend and ignored on write. Bake one with `devic environments snapshot init`.',
+    },
+  },
+  patterns: [
+    {
+      regex: /(secret|credential|token|password|apikey|api_key)/i,
+      suggestion: 'Did you mean `envVars`? They are encrypted at rest and returned masked.',
+    },
+    {
+      regex: /(sandbox|runtime|snapshot|memory|init)/i,
+      suggestion: 'Did you mean a key inside `sandboxConfig`?',
+    },
+  ],
+};
+
 const SCHEMAS: Record<EntityKind, Schema> = {
   agent: AGENT_SCHEMA,
   assistant: ASSISTANT_SCHEMA,
@@ -450,6 +516,7 @@ const SCHEMAS: Record<EntityKind, Schema> = {
   'tool-definition': TOOL_DEFINITION_SCHEMA,
   document: DOCUMENT_SCHEMA,
   project: PROJECT_SCHEMA,
+  environment: ENVIRONMENT_SCHEMA,
 };
 
 // ── Value-type checks ────────────────────────────────────────────────────────

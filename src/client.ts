@@ -473,6 +473,202 @@ export class DevicApiClient {
     });
   }
 
+  // ── Environments ──
+
+  async listEnvironments(opts?: {
+    projectId?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.projectId) params.set('projectId', opts.projectId);
+    if (opts?.offset != null) params.set('offset', String(opts.offset));
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    const q = params.toString();
+    return this.request(`/api/v1/environments${q ? `?${q}` : ''}`);
+  }
+
+  async getEnvironment(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}`);
+  }
+
+  async createEnvironment(data: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/environments`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateEnvironment(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteEnvironment(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getEnvironmentConnections(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/connections`);
+  }
+
+  async connectEnvironment(
+    environmentId: string,
+    entityType: 'agent' | 'assistant',
+    entityId: string,
+    envVars?: Record<string, string>,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/connections/${entityType}/${entityId}`,
+      { method: 'PUT', body: JSON.stringify(envVars ? { envVars } : {}) },
+    );
+  }
+
+  async disconnectEnvironment(
+    environmentId: string,
+    entityType: 'agent' | 'assistant',
+    entityId: string,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/connections/${entityType}/${entityId}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async initializeEnvironmentSnapshot(environmentId: string): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/snapshot/initialize`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+  }
+
+  async listEnvironmentTenantSnapshots(
+    environmentId: string,
+    opts?: { limit?: number; skip?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.skip != null) params.set('skip', String(opts.skip));
+    const q = params.toString();
+    return this.request(
+      `/api/v1/environments/${environmentId}/tenant-snapshots${q ? `?${q}` : ''}`,
+    );
+  }
+
+  async initializeTenantSnapshot(
+    environmentId: string,
+    tenantId: string,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/tenant-snapshots/${encodeURIComponent(
+        tenantId,
+      )}/initialize`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+  }
+
+  async deleteTenantSnapshot(
+    environmentId: string,
+    tenantId: string,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/tenant-snapshots/${encodeURIComponent(
+        tenantId,
+      )}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async listEnvironmentSessions(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/sessions`);
+  }
+
+  async getEnvironmentSession(
+    environmentId: string,
+    sessionId: string,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/sessions/${sessionId}`,
+    );
+  }
+
+  async listEnvironmentClis(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/clis`);
+  }
+
+  // ── Sandboxes ──
+
+  async startSandbox(
+    environmentId: string,
+    data: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/sandbox/start`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async sandboxStatus(environmentId: string): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/sandbox/status`);
+  }
+
+  async execInSandbox(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/sandbox/exec`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async stopSandbox(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/environments/${environmentId}/sandbox/stop`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listSandboxFiles(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/sandbox/files/list`,
+      { method: 'POST', body: JSON.stringify(data) },
+    );
+  }
+
+  async readSandboxFile(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/sandbox/files/read`,
+      { method: 'POST', body: JSON.stringify(data) },
+    );
+  }
+
+  async writeSandboxFile(
+    environmentId: string,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/environments/${environmentId}/sandbox/files/write`,
+      { method: 'POST', body: JSON.stringify(data) },
+    );
+  }
+
   // ── Projects ──
 
   async listProjects(opts?: {

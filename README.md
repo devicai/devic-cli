@@ -97,6 +97,16 @@ devic agents create --from-json agent-config.json
 devic agents update <agentId> --name "New Name"
 devic agents delete <agentId>
 
+# Scheduling — the agent runs itself, no external cron needed
+devic agents create --name "Daily report" --cron "0 7 * * 1-5" --timezone Europe/Madrid
+devic agents update <agentId> --schedule-at 09:00 --days monday,friday --timezone Europe/Madrid
+devic agents update <agentId> --every-days 14 --at 08:30 --start-date 2026-01-06
+devic agents update <agentId> --no-schedule
+
+# Environment: the machine, secrets and tools the agent works with
+devic agents create --name "Reporter" --environment "Reporting box"
+devic agents update <agentId> --environment null   # disconnect
+
 # Threads
 devic agents threads create <agentId> -m "Analyze Q4 sales"
 devic agents threads create <agentId> -m "Analyze Q4 sales" --wait  # poll until done
@@ -289,6 +299,72 @@ devic assistants update <identifier> --from-json skills.json
 `type` must match the skill's shape (`document` or `folder`) — the API rejects a
 mismatch with `INVALID_SKILLS`. Note `availableSkillIds` is a **different**,
 legacy feature; putting a catalog skill id there does nothing.
+
+### Environments
+
+An environment is the machine an agent works on plus everything it may reach:
+the sandbox, its snapshot, the knowledge and tools it inherits, and its
+encrypted variables. Every command accepts the environment by `_id` **or name**.
+
+```bash
+# CRUD
+devic environments list
+devic environments get "Reporting box"
+devic environments create --name "Reporting box" \
+  --runtime node24 --auto-extend \
+  --env "DATABASE_URL=postgres://…" --env "SSH_PRIVATE_KEY=$(cat ~/.ssh/id_ed25519)" \
+  --init-script-file ./provision.sh --snapshots
+devic environments delete "Reporting box"
+
+# Variables. Values are encrypted at rest and always read back masked; --env
+# merges over what is stored, so the secrets you do not name survive untouched.
+devic environments update "Reporting box" --env "REGION=eu-west-1"
+devic environments update "Reporting box" --unset-env REGION
+
+# Wiring
+devic environments connections "Reporting box"
+devic environments connect "Reporting box" agent <agentId>
+devic environments disconnect "Reporting box" agent <agentId>
+
+# Snapshots — the saved machine state sessions start from
+devic environments snapshot init "Reporting box"          # bake (or re-bake) the base
+devic environments snapshot tenants "Reporting box"       # per-tenant snapshots
+devic environments snapshot init-tenant "Reporting box" acme
+devic environments snapshot delete-tenant "Reporting box" acme
+
+# History and tooling
+devic environments sessions list "Reporting box"
+devic environments sessions get "Reporting box" <sessionId>
+devic environments clis "Reporting box"
+```
+
+### Sandboxes
+
+A real Linux machine, started on an environment. The lifecycle is explicit
+because none of it is free: starting provisions and bills a machine, and
+stopping is what saves the snapshot. Commands after `start` find the live
+session on their own, so there is no id to carry around.
+
+```bash
+devic sandbox start "Reporting box" --timeout 15
+devic sandbox status "Reporting box"
+
+# A line of shell — quote it, because pipes and && belong inside
+devic sandbox exec "Reporting box" 'cd /workspace && ./report.sh | tail -20'
+
+# Files
+devic sandbox ls "Reporting box" /workspace
+devic sandbox cat "Reporting box" /workspace/report.log
+devic sandbox write "Reporting box" /workspace/report.sh --file ./report.sh
+
+devic sandbox stop "Reporting box"              # saves into the snapshot
+devic sandbox stop "Reporting box" --no-save    # throw the session away
+```
+
+The environment's variables are injected into the machine, so a script reads
+them as ordinary environment variables. That is the place for a database
+password or an SSH key — not a thread message, which is stored and readable
+back indefinitely.
 
 ### Projects
 

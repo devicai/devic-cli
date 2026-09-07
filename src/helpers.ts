@@ -184,6 +184,48 @@ export async function resolveProjectId(
   );
 }
 
+/**
+ * Resolve an environment reference to its id.
+ *
+ * Accepts an `_id` (passed through, no API call) or a name, matched
+ * case-insensitively. Environments have no `identifier` field, so the name is
+ * the only human handle there is; when two share one, the first is used and
+ * the error path lists what exists so the caller can disambiguate by id.
+ */
+export async function resolveEnvironmentId(
+  client: DevicApiClient,
+  value: string,
+): Promise<string> {
+  if (isObjectId(value)) return value;
+
+  const needle = value.trim().toLowerCase();
+  const data = (await client.listEnvironments({ limit: 1000 })) as
+    | { environments?: EnvironmentRef[] }
+    | EnvironmentRef[];
+  const envs = Array.isArray(data) ? data : data?.environments ?? [];
+
+  const match = envs.find((e) => (e.name ?? '').toLowerCase() === needle);
+  if (match?._id) return match._id;
+
+  const available = envs
+    .map((e) => e.name)
+    .filter(Boolean)
+    .join(', ');
+  throw new DevicCliError(
+    `No environment matches "${value}". Pass an environment _id or name.` +
+      (available
+        ? ` Available: ${available}.`
+        : ' Run `devic environments list` to see them.'),
+    'ENVIRONMENT_NOT_FOUND',
+    EXIT_CODES.ERROR,
+  );
+}
+
+interface EnvironmentRef {
+  _id?: string;
+  name?: string;
+}
+
 async function fetchProjects(
   client: DevicApiClient,
   archived: boolean,
