@@ -47,9 +47,9 @@ function formatEnvironment(e: EnvironmentDto): string {
         runtime: sb.runtime ?? 'node24',
         memoryMib: sb.memoryMib ?? '-',
         snapshots: sb.snapshotEnabled
-          ? sb.replaceSnapshotOnStop === false
-            ? 'fixed'
-            : 'evolving'
+          ? sb.replaceSnapshotOnStop === true
+            ? 'evolving (sessions replace it)'
+            : 'fixed (sessions cannot rewrite it)'
           : 'off',
         perTenantSnapshots: sb.perTenantSnapshots ?? false,
         autoExtend: sb.autoExtend ?? false,
@@ -156,8 +156,9 @@ export function registerEnvironmentCommands(program: Command): void {
       .option('--init-script <script>', 'Shell script run when a NEW sandbox is created')
       .option('--init-script-file <file>', 'Read the init script from a file')
       .option('--env <KEY=VALUE>', 'Environment variable (repeatable)', collectEnvVar, {})
-      .option('--snapshots', 'Save the filesystem between sessions')
-      .option('--fixed-snapshot', 'Sessions always start from the same saved state')
+      .option('--snapshots', 'Save the filesystem between sessions (fixed unless --evolving-snapshot)')
+      .option('--evolving-snapshot', "Let every session's changes replace the snapshot. Off by default: agent runs cannot rewrite what you baked")
+      .option('--fixed-snapshot', 'Sessions always start from the same saved state (the default)')
       .option('--per-tenant-snapshots', 'Give every tenant its own snapshot')
       .option('--auto-extend', 'Renew the timeout while the sandbox is in use')
       .option('--persist', 'Keep the machine alive after the session closes')
@@ -190,8 +191,12 @@ export function registerEnvironmentCommands(program: Command): void {
           } else if (o.initScript) {
             sandboxConfig.initScript = o.initScript;
           }
-          if (o.snapshots || o.fixedSnapshot) sandboxConfig.snapshotEnabled = true;
-          // A fixed snapshot is "snapshots on, but never replaced".
+          if (o.snapshots || o.fixedSnapshot || o.evolvingSnapshot)
+            sandboxConfig.snapshotEnabled = true;
+          // `replaceSnapshotOnStop` is opt-IN in the engine: unset means agent
+          // sessions never write back, which is the safe default and the one
+          // the dashboard shows. Only `--evolving-snapshot` turns that on.
+          if (o.evolvingSnapshot) sandboxConfig.replaceSnapshotOnStop = true;
           if (o.fixedSnapshot) sandboxConfig.replaceSnapshotOnStop = false;
           if (o.perTenantSnapshots) sandboxConfig.perTenantSnapshots = true;
           if (o.autoExtend) sandboxConfig.autoExtend = true;
@@ -225,6 +230,14 @@ export function registerEnvironmentCommands(program: Command): void {
         {},
       )
       .option('--unset-env <KEY>', 'Remove a variable (repeatable)', (v: string, prev: string[]) => [...prev, v], [])
+      .option('--snapshots', 'Turn snapshots on')
+      .option('--no-snapshots', 'Turn snapshots off')
+      .option('--evolving-snapshot', "Let sessions' changes replace the snapshot")
+      .option('--fixed-snapshot', 'Freeze the snapshot: sessions always start from the saved state')
+      .option('--per-tenant-snapshots', 'Give every tenant its own snapshot')
+      .option('--no-per-tenant-snapshots', 'Back to one shared snapshot')
+      .option('--persist', 'Keep the machine alive after the session closes')
+      .option('--no-persist', 'Let the machine go when the session closes')
       .option('--auto-extend', 'Turn auto-extend on')
       .option('--no-auto-extend', 'Turn auto-extend off')
       .option('--public-slug <slug>', 'Publish the snapshot under this subdomain ("" releases it)')
@@ -273,6 +286,18 @@ export function registerEnvironmentCommands(program: Command): void {
           } else if (o.initScript) {
             sandboxConfig.initScript = o.initScript;
           }
+          if (o.evolvingSnapshot && o.fixedSnapshot) {
+            throw new Error(
+              'Pass one of --evolving-snapshot or --fixed-snapshot, not both.',
+            );
+          }
+          if (o.snapshots !== undefined) sandboxConfig.snapshotEnabled = !!o.snapshots;
+          if (o.evolvingSnapshot) sandboxConfig.replaceSnapshotOnStop = true;
+          if (o.fixedSnapshot) sandboxConfig.replaceSnapshotOnStop = false;
+          if (o.perTenantSnapshots !== undefined)
+            sandboxConfig.perTenantSnapshots = !!o.perTenantSnapshots;
+          if (o.persist !== undefined)
+            sandboxConfig.persistAfterSessionClose = !!o.persist;
           if (o.autoExtend !== undefined) sandboxConfig.autoExtend = !!o.autoExtend;
           if (o.publicSlug !== undefined)
             sandboxConfig.publicSlug = o.publicSlug === '' ? null : o.publicSlug;

@@ -153,22 +153,53 @@ export function registerSandboxCommands(program: Command): void {
     );
 
   // sandbox stop <environment>
-  sandbox
+  const stopCmd = sandbox
     .command('stop <environment>')
-    .description('Stop the session — with snapshots on, this is what saves the work')
+    .description('Stop the session. On an evolving snapshot this saves; on a fixed one pass --save')
     .option('--sandbox <sandboxId>', 'Target a specific sandbox instead of the live session')
-    .option('--no-save', 'Throw the session away instead of saving it into the snapshot')
+    .option('--save', 'Write this session into the snapshot, even on a fixed one (this is how you provision)')
+    .option('--no-save', 'Throw the session away')
     .option('--force', 'Overwrite the snapshot even if another session replaced it meanwhile')
-    .action(
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Whether stopping saves depends on the environment, and matches what the',
+        'dashboard terminal does:',
+        '',
+        '  evolving snapshot  saves by default (--no-save to discard)',
+        '  fixed snapshot     does NOT save (--save to bake, e.g. after installing deps)',
+        '  snapshots off      nothing to save either way',
+      ].join('\n'),
+    );
+
+  stopCmd.action(
       withAction(
         async (environment: unknown, opts: unknown) => {
           const o = opts as Record<string, any>;
           const client = createClient();
           const environmentId = await resolveEnvironmentId(client, environment as string);
           const sandboxId = await resolveSandboxId(client, environmentId, o.sandbox);
+
+          // Saying nothing must not mean "overwrite the snapshot". The engine's
+          // manual-stop route saves whenever `saveChanges` is not false, which
+          // would let a plain `stop` rewrite a snapshot the dashboard treats as
+          // frozen — so the default is read from the environment instead, and a
+          // fixed snapshot is only written when explicitly asked.
+          let saveChanges: boolean;
+          if (stopCmd.getOptionValueSource('save') === 'cli') {
+            saveChanges = !!o.save;
+          } else {
+            const env = (await client.getEnvironment(environmentId)) as {
+              sandboxConfig?: { snapshotEnabled?: boolean; replaceSnapshotOnStop?: boolean };
+            };
+            const sb = env?.sandboxConfig ?? {};
+            saveChanges = !!sb.snapshotEnabled && sb.replaceSnapshotOnStop === true;
+          }
+
           return client.stopSandbox(environmentId, {
             sandboxId,
-            saveChanges: o.save,
+            saveChanges,
             force: o.force,
           });
         },
@@ -185,7 +216,7 @@ export function registerSandboxCommands(program: Command): void {
           return lines.join('\n');
         },
       ),
-    );
+  );
 
   // sandbox ls <environment> [path]
   sandbox

@@ -357,9 +357,35 @@ devic sandbox ls "Reporting box" /workspace
 devic sandbox cat "Reporting box" /workspace/report.log
 devic sandbox write "Reporting box" /workspace/report.sh --file ./report.sh
 
-devic sandbox stop "Reporting box"              # saves into the snapshot
+devic sandbox stop "Reporting box"              # saves only if the snapshot is evolving
+devic sandbox stop "Reporting box" --save       # bake a fixed snapshot
 devic sandbox stop "Reporting box" --no-save    # throw the session away
 ```
+
+Whether `stop` saves depends on the environment, matching the dashboard
+terminal: an **evolving** snapshot saves by default, a **fixed** one does not
+unless you pass `--save`. Saying nothing never overwrites a snapshot someone
+froze on purpose.
+
+### Provisioning a machine
+
+Install dependencies once, bake them, and let every later run start from there
+without being able to break it:
+
+```bash
+devic environments create --name "Build box" --runtime node24 --snapshots  # fixed by default
+
+devic sandbox start "Build box" --timeout 20    # fresh machine, runs the init script
+devic sandbox exec  "Build box" 'cd /workspace && npm install'
+devic sandbox write "Build box" /workspace/report.py --file ./report.py
+devic sandbox stop  "Build box" --save          # bake it
+
+devic environments update "Build box" --evolving-snapshot   # let sessions evolve it
+devic environments update "Build box" --fixed-snapshot      # freeze it again
+```
+
+`devic environments snapshot init "Build box"` does the same baking unattended
+from the init script and the configured CLIs.
 
 The environment's variables are injected into the machine, so a script reads
 them as ordinary environment variables. That is the place for a database
