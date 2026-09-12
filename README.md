@@ -392,3 +392,58 @@ Credentials are stored in `~/.config/devic/config.json`. Environment variables t
 ## Requirements
 
 - Node.js 20+
+
+## Interactive cloud terminal (prototype)
+
+`live` is a terminal interface to cloud execution. It uses the CLI's existing
+login, `DEVIC_API_KEY`, and base URL configuration.
+
+```bash
+npm run build
+node bin/devic.js live <assistant-identifier>
+node bin/devic.js live <assistant-identifier> --chat-uid <chat-uid>
+node bin/devic.js live <assistant-identifier> -m "Hello"
+node bin/devic.js live <agent-id> --agent -m "Analyze this task"
+node bin/devic.js live <agent-id> --agent --thread <thread-id>
+```
+
+Assistant conversations use SSE snapshots, partial replies and text deltas, with
+polling fallback on stream failure. `--polling` forces polling. Agent threads use
+polling and display messages, tool names, task progress and execution state.
+A new prompt in agent mode creates a new thread; it does not append to the previous
+thread. Streaming support depends on the target backend version.
+
+Interactive commands: `/help`, `/follow`, `/new`, `/stop`, `/exit`. Agent mode also
+supports `/approve`, `/reject`, `/pause`, `/resume`. Ctrl+C while following detaches
+locally; cloud execution continues. `/stop` requests a graceful assistant stop or
+an agent pause. Follow sessions are bounded to ten minutes and print IDs for
+reattachment. A single `-m` follows one turn and exits; without a TTY use `-m`,
+`--chat-uid` or `--thread`. Live output is human-readable (not the existing JSON
+script interface). The prototype accepts new prompts after the current follow
+finishes; it does not send steering messages during execution.
+
+### Local tools
+
+```bash
+node bin/devic.js live <assistant-identifier> --local-tools --workspace /path/to/project
+```
+
+This explicitly offers `read_file` and `list_files` via Model Interface Protocol
+(MIP). Every call requires `y` confirmation in a terminal. Paths must resolve
+inside the workspace, including symlinks; reads are capped at 64 KiB and directory
+listings at 500 entries. Approved tool results are sent to Devic. There is no shell
+or write tool in this prototype. MIP is assistant-only. Repeated tool call IDs are
+not executed again during the same process, and an ambiguous submission is never
+automatically retried. The process-local ledger is not a durable execution journal.
+
+### Prototype verification
+
+```bash
+npm test
+npm run test:tty # Python 3; POSIX PTY, Linux/macOS
+```
+
+Tests use a local mock API and temporary files: SSE chunk boundaries, UTF-8,
+partial/final deduplication, polling fallback without resending, agent approval
+states, local path boundaries, and a real terminal MIP round trip. These checks do
+not establish connectivity to a deployed Devic API.

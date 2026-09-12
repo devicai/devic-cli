@@ -78,6 +78,7 @@ export interface ToolCallResponse {
 }
 
 export interface ProcessMessageDto {
+  tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
   message: string;
   chatUid?: string;
   userName?: string;
@@ -108,6 +109,7 @@ export type RealtimeStatus =
   | 'limit_exceeded';
 
 export interface RealtimeChatHistory {
+  streamingMessage?: ChatMessage;
   chatUID: string;
   clientUID: string;
   chatHistory: ChatMessage[];

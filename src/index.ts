@@ -8,6 +8,7 @@ import { setGlobalBaseUrl } from './config.js';
 import { EXIT_CODES } from './types.js';
 import type { OutputFormat } from './types.js';
 
+import { registerLiveCommand } from './commands/live.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerAssistantCommands } from './commands/assistants.js';
 import { registerAgentCommands } from './commands/agents.js';
@@ -41,6 +42,7 @@ program
     }
   });
 
+registerLiveCommand(program);
 registerAuthCommands(program);
 registerAssistantCommands(program);
 registerAgentCommands(program);
