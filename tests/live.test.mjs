@@ -26,7 +26,7 @@ test('renderer appends partials once and strips terminal escape commands', () =>
   const renderer = new LiveRenderer(text => { output += text; });
   renderer.messages([message('H')]); renderer.messages([message('Hello')]);
   renderer.messages([message('Hello')]); renderer.messages([message('Hello\x1b[2J!')]);
-  assert.equal(output, '\nassistant › Hello!');
+  assert.equal(output, '\ndevic › Hello!');
 });
 
 test('local tools require approval and reject traversal and symlink escapes', async () => {
@@ -67,9 +67,9 @@ async function runMock(mode) {
     });
     let output = ''; child.stdout.on('data', c => { output += c; }); child.stderr.on('data', c => { output += c; });
     const code = await new Promise(resolve => child.on('exit', resolve));
-    assert.equal(code, 0, output); assert.equal(sends, 1); assert.match(output, /completed/);
-    if (mode === 'fallback') assert.match(output, /continuing with polling/);
-    else assert.equal((output.match(/ello/g) || []).length, 1, output);
+    assert.equal(code, 0, output); assert.equal(sends, 1); assert.match(output, /devic › Hello/);
+    assert.doesNotMatch(output, /mock-chat|completed|processing|SSE|polling|\x1b/);
+    assert.equal((output.match(/Hello/g) || []).length, 1, output);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
 
@@ -90,6 +90,48 @@ test('agent follow renders tasks and stops for approval', async () => {
     let output = ''; child.stdout.on('data', c => { output += c; }); child.stderr.on('data', c => { output += c; });
     const code = await new Promise(resolve => child.on('exit', resolve));
     assert.equal(code, 0, output);
-    assert.match(output, /paused_for_approval/); assert.match(output, /\[x\] Inspect input/);
+    assert.match(output, /Approval needed/); assert.match(output, /\[x\] Inspect input/);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+
+test('conversation hides internal messages and raw tool results; summaries do not replay', () => {
+  let output = '';
+  const renderer = new LiveRenderer(text => { output += text; }, { tty: false });
+  const history = [
+    { uid: 'system', role: 'developer', content: { message: 'INTERNAL_CONTEXT' } },
+    { uid: 'call', role: 'assistant', content: {}, summary: 'Searching project files', tool_calls: [{ id: 't1', function: { name: 'search_files' } }] },
+    { uid: 'result', role: 'tool', tool_call_id: 't1', content: { message: 'RAW_PAYLOAD' }, summary: 'Found three files' },
+    message('Here is the answer'),
+  ];
+  renderer.messages(history); renderer.messages(history); renderer.finish();
+  assert.doesNotMatch(output, /INTERNAL_CONTEXT|RAW_PAYLOAD/);
+  assert.equal(output.match(/Searching project files/g).length, 1);
+  assert.equal(output.match(/Found three files/g).length, 1);
+  assert.equal(output.match(/Here is the answer/g).length, 1);
+});
+
+test('submitted prompts display once when echoed by the API', () => {
+  let output = '';
+  const renderer = new LiveRenderer(text => { output += text; }, { tty: false });
+  renderer.user('Hello');
+  renderer.messages([{ uid: 'user1', role: 'user', content: { message: 'Hello' } }]);
+  renderer.messages([{ uid: 'user1', role: 'user', content: { message: 'Hello' } }]);
+  assert.equal(output.match(/Hello/g).length, 1);
+});
+
+test('TTY activity animates and is cleared on output; pipes stay plain', async () => {
+  let output = '';
+  const renderer = new LiveRenderer(text => { output += text; }, { tty: true, color: true });
+  renderer.busy('Thinking');
+  await new Promise(resolve => setTimeout(resolve, 110));
+  renderer.messages([message('Ready')]); renderer.finish();
+  assert.match(output, /Thinking/); assert.match(output, /\x1b\[2K/); assert.match(output, /\x1b\[35;1m/);
+  const stopped = output;
+  await new Promise(resolve => setTimeout(resolve, 110));
+  assert.equal(output, stopped);
+  let plain = '';
+  const pipe = new LiveRenderer(text => { plain += text; }, { tty: false, color: false });
+  pipe.busy(); pipe.messages([message('Ready')]); pipe.finish();
+  assert.doesNotMatch(plain, /Thinking|\x1b/);
 });

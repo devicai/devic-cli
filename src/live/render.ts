@@ -5,32 +5,101 @@ export function safe(value: string): string {
   return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 }
 
-/** Stable message IDs bridge partial replies and final snapshots without replaying text. */
+interface DisplayOptions { tty?: boolean; color?: boolean; columns?: () => number }
+
+/** A scrollback-first conversation; only the transient activity line is redrawn. */
 export class LiveRenderer {
   private texts = new Map<string, string>();
   private tools = new Set<string>();
   private active = '';
-  constructor(private write: (text: string) => void = text => { process.stdout.write(text); }) {}
+  private echoed?: string;
+  private timer?: ReturnType<typeof setInterval>;
+  private spinnerVisible = false;
+  private label = 'Thinking';
+  private frame = 0;
+  private readonly tty: boolean;
+  private readonly color: boolean;
+  constructor(private write: (text: string) => void = text => { process.stdout.write(text); },
+    private options: DisplayOptions = {}) {
+    this.tty = options.tty ?? (!!process.stdout.isTTY && process.env.TERM !== 'dumb');
+    this.color = options.color ?? (this.tty && process.env.NO_COLOR === undefined);
+  }
+  private ink(code: string, text: string): string { return this.color ? `\x1b[${code}m${text}\x1b[0m` : text; }
+  banner(): void { this.write(`\n  ${this.ink('36;1', '◆ devic')}  ${this.ink('2', '/help for commands')}\n`); }
+  prompt(): string { this.finish(); return `\n${this.ink('36;1', 'you ›')} `; }
+  user(text: string, alreadyVisible = false): void {
+    this.finish();
+    this.echoed = safe(text);
+    if (!alreadyVisible) this.write(`\n${this.ink('36;1', 'you ›')} ${safe(text)}\n`);
+  }
+  note(text: string): void {
+    this.finish(); this.write(`\n  ${this.ink('2', safe(text))}\n`);
+  }
+  busy(label = 'Thinking'): void {
+    this.label = safe(label);
+    if (!this.tty || this.timer || this.active) return;
+    const tick = () => {
+      const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      const width = Math.max(8, (this.options.columns?.() ?? process.stdout.columns ?? 80) - 6);
+      this.write(`\r\x1b[2K  ${this.ink('36', frames[this.frame++ % frames.length])} ${this.ink('2', this.label.slice(0, width))}`);
+      this.spinnerVisible = true;
+    };
+    tick(); this.timer = setInterval(tick, 90); this.timer.unref();
+  }
+  private clearActivity(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    if (this.spinnerVisible) this.write('\r\x1b[2K');
+    this.spinnerVisible = false;
+  }
+  finish(): void {
+    this.clearActivity();
+    if (this.active) this.write('\n');
+    this.active = '';
+  }
+  reset(): void { this.finish(); this.texts.clear(); this.tools.clear(); this.echoed = undefined; }
   messages(messages: ChatMessage[]): void {
+    // Readline has already displayed the submitted prompt. Match its latest
+    // occurrence, so repeated prompts in the history are not accidentally hidden.
+    let echoedIndex = -1;
+    if (this.echoed !== undefined) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user' && safe(this.text(messages[i])) === this.echoed) { echoedIndex = i; break; }
+      }
+    }
     messages.forEach((message, index) => {
       const id = message.uid || `${index}:${message.role}`;
-      const content = message.content as unknown;
-      const text = safe(typeof content === 'string' ? content : message.content?.message || '');
-      const previous = this.texts.get(id) || '';
-      if (text && text !== previous) {
-        if (this.active !== id || !text.startsWith(previous)) {
-          this.write(`\n${safe(message.role)} › `);
-          this.active = id;
+      if (index === echoedIndex) { this.texts.set(id, safe(this.text(message))); this.echoed = undefined; }
+      // Raw tool results and system/developer context do not belong in the conversation UI.
+      if (message.role === 'user' || message.role === 'assistant') {
+        const text = safe(this.text(message));
+        const previous = this.texts.get(id) || '';
+        if (text && text !== previous) {
+          this.clearActivity();
+          if (this.active !== id || !text.startsWith(previous)) {
+            this.finish();
+            this.write(`\n${this.ink(message.role === 'user' ? '36;1' : '35;1', message.role === 'user' ? 'you ›' : 'devic ›')} `);
+            this.active = id;
+          }
+          this.write(text.startsWith(previous) ? text.slice(previous.length) : text);
         }
-        this.write(text.startsWith(previous) ? text.slice(previous.length) : text);
+        this.texts.set(id, text);
       }
-      this.texts.set(id, text);
       for (const tool of message.tool_calls || []) {
-        if (this.tools.has(tool.id)) continue;
-        this.tools.add(tool.id);
-        this.write(`\n  ↳ ${safe(tool.function.name)}\n`);
-        this.active = '';
+        this.tool(tool.id, message.summary || tool.function.name.replace(/_/g, ' '));
       }
+      if (message.role === 'tool' && message.summary) this.tool(message.tool_call_id || id, message.summary);
     });
+  }
+  private text(message: ChatMessage): string {
+    return typeof message.content === 'string' ? message.content : message.content?.message || '';
+  }
+  private tool(id: string, summary: string): void {
+    const text = safe(summary).replace(/\s+/g, ' ').trim().slice(0, 240);
+    const key = `${id}:${text}`;
+    if (!text || this.tools.has(key)) return;
+    this.tools.add(key);
+    this.finish();
+    this.write(`  ${this.ink('36', '↳')} ${this.ink('2', text)}\n`);
   }
 }

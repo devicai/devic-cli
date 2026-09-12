@@ -45,13 +45,17 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         env={**os.environ, 'DEVIC_API_KEY': 'test-key', 'DEVIC_BASE_URL': f'http://127.0.0.1:{server.server_port}'})
     os.close(slave)
     output = ''
+    transcript = ''
     def until(marker):
-        global output
+        global output, transcript
         deadline = time.monotonic() + 10
         while marker not in output:
             assert time.monotonic() < deadline, output
             if select.select([master], [], [], .2)[0]:
-                output += os.read(master, 65536).decode(errors='replace')
+                chunk = os.read(master, 65536).decode(errors='replace')
+                assert chunk, output
+                transcript += chunk
+                output += chunk
         output = output.split(marker, 1)[1]
     try:
         until('you ›')
@@ -74,6 +78,10 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
                     break
                 output += chunk.decode(errors='replace')
             raise AssertionError(repr(output))
+        assert 'tty-chat' not in transcript
+        assert 'waiting_for_tool_response' not in transcript
+        assert 'RAW_PAYLOAD' not in transcript
+        assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
         print('PASS: interactive prompt, MIP approval, local result, cloud continuation, /exit')

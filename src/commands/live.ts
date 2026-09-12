@@ -36,8 +36,8 @@ export function registerLiveCommand(program: Command): void {
       let tasks = '';
       let useStream = !options.polling;
       const answered = new Set<string>();
-      const note = (text: string) => process.stdout.write(`\n${safe(text)}\n`);
-      const question = async (prompt: string) => closed ? '/exit' : (await rl!.question(prompt)).trim();
+      const note = (text: string) => renderer.note(text);
+      const question = async (prompt: string) => { renderer.finish(); return closed ? '/exit' : (await rl!.question(prompt)).trim(); };
       const detach = () => {
         if (active) { active.abort(); note('Detached. Cloud execution continues. Use /follow or /stop.'); }
         else { closed = true; rl?.close(); }
@@ -48,16 +48,22 @@ export function registerLiveCommand(program: Command): void {
       async function follow(): Promise<void> {
         const controller = new AbortController();
         active = controller;
+        renderer.busy();
         const deadline = Date.now() + 10 * 60_000;
         const pause = () => delay(1000, undefined, { signal: controller.signal });
         try {
           while (!controller.signal.aborted && !closed) {
-            if (Date.now() > deadline) { note('Follow timeout after 10 minutes; resume with /follow or the printed ID.'); break; }
+            if (Date.now() > deadline) { note('Follow timeout after 10 minutes; resume with /follow. Session details: /status.'); break; }
             if (options.agent) {
               if (!threadId) return;
               const thread = await client.getThread(threadId, true, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]));
               renderer.messages(thread.threadContent || []);
-              if (thread.state !== state) { state = thread.state; note(`[${state}]`); }
+              if (thread.state !== state) {
+                state = thread.state;
+                if (state === 'paused_for_approval') note('Approval needed · /approve or /reject');
+                else if (['paused', 'paused_for_resume'].includes(state)) note('Paused · /resume to continue');
+                else if (state === 'waiting_for_response') note('Waiting for your response');
+              }
               const nextTasks = JSON.stringify(thread.tasks || []);
               if (nextTasks !== tasks) {
                 tasks = nextTasks;
@@ -67,6 +73,7 @@ export function registerLiveCommand(program: Command): void {
                 throw new Error(thread.finishReason || `Thread ${thread.state}`);
               }
               if (!['queued', 'processing', 'handed_off'].includes(thread.state)) return;
+              renderer.busy(thread.state === 'handed_off' ? 'Working with a subagent' : 'Working');
               await pause(); continue;
             }
             if (!chatUid) return;
@@ -77,9 +84,8 @@ export function registerLiveCommand(program: Command): void {
                 const index = messages.findIndex(m => m.uid === snapshot.streamingMessage!.uid);
                 if (index < 0) messages.push(snapshot.streamingMessage); else messages[index] = snapshot.streamingMessage;
               }
-              if (snapshot.status === 'processing' && state !== 'processing') note('[processing]');
               renderer.messages(messages);
-              if (snapshot.status !== state && snapshot.status !== 'processing') note(`[${snapshot.status}]`);
+              renderer.busy(snapshot.status === 'handed_off' ? 'Working with a subagent' : 'Thinking');
               state = snapshot.status;
               if (['completed', 'error', 'limit_exceeded', 'waiting_for_tool_response'].includes(snapshot.status)) gate = snapshot;
             };
@@ -96,7 +102,7 @@ export function registerLiveCommand(program: Command): void {
                 }, connection.signal);
               } catch (error) {
                 if (!gate && !controller.signal.aborted) {
-                  note('Stream interrupted or unavailable; continuing with polling.'); useStream = false;
+                  useStream = false;
                 }
               } finally {
                 clearTimeout(timeout); controller.signal.removeEventListener('abort', abort);
@@ -131,41 +137,45 @@ export function registerLiveCommand(program: Command): void {
           }
         } catch (error) {
           if (!controller.signal.aborted) throw error;
-        } finally { active = undefined; }
+        } finally { active = undefined; renderer.finish(); }
       }
 
-      async function send(message: string): Promise<void> {
+      async function send(message: string, alreadyVisible = false): Promise<void> {
+        if (options.agent) renderer.reset();
+        renderer.user(message, alreadyVisible);
+        renderer.busy('Sending');
         if (options.agent) {
           const result = await client.createThread(identifier, { message }) as { threadId?: string; _id?: string };
           threadId = result.threadId || result._id;
           if (!threadId) throw new Error('API did not return a thread ID');
           state = ''; tasks = '';
-          note(`Thread: ${threadId}\nResume: devic live ${identifier} --agent --thread ${threadId}`);
+
         } else {
           const result = await client.sendMessageAsync(identifier, { message, chatUid,
             ...(options.localTools ? { tools: localTools } : {}),
           });
           chatUid = result.chatUid;
           if (!chatUid) throw new Error('API did not return a chat UID');
-          note(`Chat: ${chatUid}\nResume: devic live ${identifier} --chat-uid ${chatUid}`);
+
         }
         await follow();
       }
 
       try {
-        note(`Devic live · ${options.agent ? 'agent (polling)' : 'assistant (SSE)'} · ${identifier}`);
+        if (interactive) renderer.banner();
         if (options.message) { await send(options.message); return; }
         if (threadId || chatUid) await follow();
         if (!rl) return;
-        note('/help for commands. Ctrl+C detaches while following; /exit leaves cloud execution running.');
+
         while (!closed) {
-          const input = await question('\nyou › ');
+          const input = await question(renderer.prompt());
           if (!input) continue;
           if (input === '/exit') break;
           try {
-            if (input === '/help') note('/follow /stop /new /exit; agents: /approve /reject /pause /resume. A new agent prompt creates a new thread.');
+            if (input === '/help') note('/follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            else if (input === '/status') note(`${options.agent ? 'Agent' : 'Assistant'}: ${identifier}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nTransport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
             else if (input === '/follow') await follow();
-            else if (input === '/new') { chatUid = undefined; threadId = undefined; state = ''; note('Next prompt starts a new conversation or execution.'); }
+            else if (input === '/new') { chatUid = undefined; threadId = undefined; state = ''; renderer.reset(); note('Next prompt starts a new conversation or execution.'); }
             else if (input === '/stop') {
               if (options.agent && threadId) { await client.pauseThread(threadId); note('Cloud thread pause requested.'); }
               else if (chatUid) { await client.stopChat(identifier, chatUid); note('Cloud chat stop requested.'); }
@@ -175,10 +185,10 @@ export function registerLiveCommand(program: Command): void {
               else await client.resumeThread(threadId);
               await follow();
             } else if (input.startsWith('/')) note('Unknown command. Use /help.');
-            else await send(input);
+            else await send(input, true);
           } catch (error) { note(`Error: ${error instanceof Error ? error.message : String(error)}. Use /follow to inspect current execution.`); }
         }
-      } finally { rl?.close(); process.removeListener('SIGINT', detach); }
+      } finally { renderer.finish(); rl?.close(); process.removeListener('SIGINT', detach); }
       // This foreground command is finished. Aborting SSE can leave a fetch
       // preconnect alive; do not make an explicit /exit wait for its timeout.
       await new Promise<void>(resolve => process.stdout.write('', () => resolve()));

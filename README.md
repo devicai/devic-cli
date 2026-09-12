@@ -413,10 +413,10 @@ polling and display messages, tool names, task progress and execution state.
 A new prompt in agent mode creates a new thread; it does not append to the previous
 thread. Streaming support depends on the target backend version.
 
-Interactive commands: `/help`, `/follow`, `/new`, `/stop`, `/exit`. Agent mode also
+Interactive commands: `/help`, `/follow`, `/new`, `/stop`, `/status`, `/exit`. Agent mode also
 supports `/approve`, `/reject`, `/pause`, `/resume`. Ctrl+C while following detaches
 locally; cloud execution continues. `/stop` requests a graceful assistant stop or
-an agent pause. Follow sessions are bounded to ten minutes and print IDs for
+an agent pause. Follow sessions are bounded to ten minutes; `/status` shows the session ID for
 reattachment. A single `-m` follows one turn and exits; without a TTY use `-m`,
 `--chat-uid` or `--thread`. Live output is human-readable (not the existing JSON
 script interface). The prototype accepts new prompts after the current follow
@@ -447,3 +447,10 @@ Tests use a local mock API and temporary files: SSE chunk boundaries, UTF-8,
 partial/final deduplication, polling fallback without resending, agent approval
 states, local path boundaries, and a real terminal MIP round trip. These checks do
 not establish connectivity to a deployed Devic API.
+
+The live view keeps the conversation in scrollback: cyan user prompts, violet
+assistant labels, compact tool summaries and a transient activity spinner. System
+and developer context and raw tool payloads are hidden. IDs and transport details
+appear only through `/status`; a successful streaming-to-polling fallback is
+silent. Errors and approval requests remain visible. Redirected output is plain
+text without animation, and `NO_COLOR` disables colors in a terminal.
