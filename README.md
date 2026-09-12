@@ -466,7 +466,8 @@ state; it does not retry a failed execution or unarchive an assistant.
 
 ### Switch assistant and compact context
 
-- `/assistant` lists active assistants by display name and asks for a number.
+- `/assistants` lists active assistants by display name. Use ↑/↓ and Enter to
+  switch, Escape to cancel, or type to filter. `/assistant` is an alias.
 - `/assistant <identifier>` switches directly. The next prompt starts a fresh
   conversation with that assistant; the previous cloud conversation is preserved.
   A missing or archived target leaves the current session unchanged. Selecting
@@ -480,3 +481,13 @@ state; it does not retry a failed execution or unarchive an assistant.
 in the target backend. Older deployments show an availability message. The server
 refuses busy conversations and verifies conversation ownership. Compaction may
 make a billed model call. The CLI does not change automatic-compaction settings.
+
+### Prompt menus
+
+Typing `/` opens command suggestions below the prompt, filtered as you type.
+Use ↑/↓ to select, Enter to run, Tab to complete without running, and Escape to
+hide the menu while keeping your input. Assistant-only commands are hidden in
+agent mode. Outside a menu, ↑/↓ browses submitted prompt history; left/right,
+Home/End, Backspace/Delete and Ctrl+U/Ctrl+K edit the current input. Long input
+scrolls horizontally, and menus adapt to terminal width/height and resize events.
+No additional runtime dependencies are required.

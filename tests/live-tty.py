@@ -90,25 +90,41 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         os.write(master, b'/assistant archived\n')
         until('is archived')
         until('you ›')
-        os.write(master, b'/compact\n')
+        os.write(master, b'/')
+        until('Tab complete')
+        os.write(master, b'\x1b')
+        time.sleep(.6)  # Standalone Escape must be disambiguated from an arrow sequence.
+        os.write(master, b'\x15/comp')
+        until('Compact conversation context')
+        os.write(master, b'\t')
+        time.sleep(.1)
+        assert not compacted
+        os.write(master, b'\n')
         until('Context compacted')
         until('you ›')
         assert compacted == ['/api/v1/assistants/fixture/chats/tty-chat/compact']
-        os.write(master, b'/assistant\n')
-        until('Choose a number')
-        os.write(master, b'2\n')
+        os.write(master, b'/assistants\n')
+        until('Enter switch')
+        os.write(master, b'\x1b')
+        until('you ›')
+        os.write(master, b'/assistants\n')
+        until('Enter switch')
+        os.write(master, b'\x1b[B\n')
         until('Second assistant · new conversation')
         until('you ›')
         os.write(master, b'/compact\n')
         until('Send a message before compacting')
         until('you ›')
         assert len(compacted) == 1
-        os.write(master, b'hello second\n')
+        os.write(master, 'hola segundo 🌞\n'.encode())
         until('LOCAL_TOOL_OK')
         until('you ›')
         assert messages[-1][0] == '/api/v1/assistants/second/messages?async=true'
         assert 'chatUid' not in messages[-1][1]
-        os.write(master, b'/compact\n')
+        assert messages[-1][1]['message'] == 'hola segundo 🌞'
+        os.write(master, b'/')
+        until('Tab complete')
+        os.write(master, b'\x1b[B\x1b[B\n')
         until('Context compacted')
         until('you ›')
         assert compacted[-1] == '/api/v1/assistants/second/chats/new-chat/compact'
@@ -132,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: interactive prompt, MIP, assistant picker, rejected switch, context isolation, compaction and /exit')
+        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

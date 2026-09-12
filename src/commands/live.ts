@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { createInterface } from 'node:readline/promises';
+import { LiveInput, commandOptions } from '../live/input.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from '../helpers.js';
 import { DevicApiError } from '../errors.js';
@@ -28,7 +28,7 @@ export function registerLiveCommand(program: Command): void {
       if (!interactive && options.localTools) throw new Error('--local-tools requires an interactive terminal for approvals');
       if (!interactive && !options.message && !options.thread && !options.chatUid) throw new Error('Use -m, --thread or --chat-uid outside an interactive terminal');
       const client = createClient();
-      const rl = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
+      const rl = interactive ? new LiveInput() : undefined;
       const renderer = new LiveRenderer();
       let chatUid = options.chatUid;
       let threadId = options.thread;
@@ -39,7 +39,7 @@ export function registerLiveCommand(program: Command): void {
       let useStream = !options.polling;
       const answered = new Set<string>();
       const note = (text: string) => renderer.note(text);
-      const question = async (prompt: string) => { renderer.finish(); return closed ? '/exit' : (await rl!.question(prompt)).trim(); };
+      const question = async (prompt: string, commands = false) => { renderer.finish(); return closed ? '/exit' : (await rl!.question(prompt, commands ? commandOptions(!!options.agent) : [])).trim(); };
       const detach = () => {
         if (active) { active.abort(); note('Detached. Cloud execution continues. Use /follow or /stop.'); }
         else { closed = true; rl?.close(); }
@@ -143,12 +143,11 @@ export function registerLiveCommand(program: Command): void {
           const assistants = (await client.getAssistants()).filter(a => a.state !== 'inactive' && a.state !== 'coming_soon');
           renderer.finish();
           if (!assistants.length) { note('No active assistants available.'); return; }
-          note(assistants.map((a, i) => `${i + 1}. ${a.name}`).join('\n'));
-          const selection = await question('\nChoose a number (Enter to cancel) › ');
-          if (!selection || closed) return;
-          const selected = /^\d+$/.test(selection) ? assistants[Number(selection) - 1] : undefined;
-          if (!selected) { note('Choose one of the listed numbers.'); return; }
-          target = selected.identifier;
+          const selected = await rl!.select(assistants.map(a => ({ value: a.identifier, label: a.name,
+            description: a.identifier === identifier && !options.agent ? 'current' : undefined,
+          })), options.agent ? undefined : identifier);
+          if (!selected || closed) return;
+          target = selected;
         }
         renderer.busy('Loading assistant');
         const assistant = await client.getAssistant(target);
@@ -226,11 +225,12 @@ export function registerLiveCommand(program: Command): void {
         if (!rl) return;
 
         while (!closed) {
-          const input = await question(renderer.prompt());
+          const input = await question(renderer.prompt(), true);
           if (!input) continue;
           if (input === '/exit') break;
           try {
-            if (input === '/help') note('/assistant [identifier] · /compact · /follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            else if (input === '/assistants') await switchAssistant('');
             else if (input === '/assistant' || input.startsWith('/assistant ')) await switchAssistant(input.slice('/assistant'.length).trim());
             else if (input === '/compact') await compact();
             else if (input === '/status') note(`${options.agent ? 'Agent' : 'Assistant'}: ${identifier}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nTransport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
