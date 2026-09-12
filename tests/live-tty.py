@@ -11,25 +11,41 @@ import time
 from pathlib import Path
 
 submitted = []
+messages = []
+compacted = []
 class API(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
     def do_POST(self):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path.endswith('/compact'):
+            compacted.append(self.path)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"compacted":true,"checkpoint":{"compactedMessageCount":12}}')
+            return
         if self.path.endswith('/tool-response'):
             submitted.extend(data['responses'])
         else:
             assert len(data['tools']) == 2
+            messages.append((self.path, data))
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(b'{"chatUid":"tty-chat"}')
+        self.wfile.write(json.dumps({'chatUid': 'new-chat' if '/second/' in self.path else 'tty-chat'}).encode())
     def do_GET(self):
-        if self.path == '/api/v1/assistants/fixture':
-            self.send_response(200)
+        assistants = [
+            {'identifier': 'fixture', 'name': 'Fixture assistant', 'state': 'active'},
+            {'identifier': 'second', 'name': 'Second assistant', 'state': 'active'},
+            {'identifier': 'archived', 'name': 'Archived assistant', 'state': 'inactive'},
+        ]
+        if self.path == '/api/v1/assistants' or self.path.count('/') == 4:
+            target = next((a for a in assistants if self.path.endswith('/' + a['identifier'])), None)
+            self.send_response(200 if target or self.path == '/api/v1/assistants' else 404)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(b'{"name":"Fixture assistant","state":"active"}')
+            self.wfile.write(json.dumps(assistants if self.path == '/api/v1/assistants' else target or {'message': 'Assistant not found'}).encode())
             return
         result = {'chatHistory': [], 'status': 'completed' if submitted else 'waiting_for_tool_response'}
         if submitted:
@@ -71,6 +87,31 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         os.write(master, b'y\n')
         until('LOCAL_TOOL_OK')
         until('you ›')
+        os.write(master, b'/assistant archived\n')
+        until('is archived')
+        until('you ›')
+        os.write(master, b'/compact\n')
+        until('Context compacted')
+        until('you ›')
+        assert compacted == ['/api/v1/assistants/fixture/chats/tty-chat/compact']
+        os.write(master, b'/assistant\n')
+        until('Choose a number')
+        os.write(master, b'2\n')
+        until('Second assistant · new conversation')
+        until('you ›')
+        os.write(master, b'/compact\n')
+        until('Send a message before compacting')
+        until('you ›')
+        assert len(compacted) == 1
+        os.write(master, b'hello second\n')
+        until('LOCAL_TOOL_OK')
+        until('you ›')
+        assert messages[-1][0] == '/api/v1/assistants/second/messages?async=true'
+        assert 'chatUid' not in messages[-1][1]
+        os.write(master, b'/compact\n')
+        until('Context compacted')
+        until('you ›')
+        assert compacted[-1] == '/api/v1/assistants/second/chats/new-chat/compact'
         os.write(master, b'/exit\n')
         until('/exit')
         # Keep consuming the PTY while waiting: terminal writes may block the
@@ -91,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: interactive prompt, MIP approval, local result, cloud continuation, /exit')
+        print('PASS: interactive prompt, MIP, assistant picker, rejected switch, context isolation, compaction and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

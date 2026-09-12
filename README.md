@@ -463,3 +463,20 @@ text. Identical replies in separate turns remain visible.
 Before sending, the CLI checks whether the assistant is archived. Failed cloud
 executions show available error details and explain that `/follow` only observes
 state; it does not retry a failed execution or unarchive an assistant.
+
+### Switch assistant and compact context
+
+- `/assistant` lists active assistants by display name and asks for a number.
+- `/assistant <identifier>` switches directly. The next prompt starts a fresh
+  conversation with that assistant; the previous cloud conversation is preserved.
+  A missing or archived target leaves the current session unchanged. Selecting
+  the current assistant keeps the current conversation.
+- `/compact` requests server-side compaction of the current assistant conversation.
+  It keeps the visible transcript and recent context, and reports whether older
+  messages were summarized or there was nothing worth compacting. It is not
+  available for agent threads in this version.
+
+`/compact` requires `POST /api/v1/assistants/:identifier/chats/:chatUid/compact`
+in the target backend. Older deployments show an availability message. The server
+refuses busy conversations and verifies conversation ownership. Compaction may
+make a billed model call. The CLI does not change automatic-compaction settings.

@@ -242,6 +242,16 @@ export class DevicApiClient {
     return this.request(`/api/v1/assistants/${assistantId}/chats/${chatUid}/stop`, { method: 'POST' });
   }
 
+  async compactConversation(assistantId: string, chatUid: string): Promise<{
+    compacted: boolean;
+    reason?: string;
+    checkpoint?: { compactedMessageCount?: number; tokensBefore?: number; tokensAfter?: number };
+  }> {
+    return this.request(`/api/v1/assistants/${encodeURIComponent(assistantId)}/chats/${encodeURIComponent(chatUid)}/compact`, {
+      method: 'POST', body: '{}', signal: AbortSignal.timeout(120_000),
+    });
+  }
+
   async sendToolResponses(assistantId: string, chatUid: string, responses: ToolCallResponse[]): Promise<AsyncResponse> {
     return this.request(`/api/v1/assistants/${assistantId}/chats/${chatUid}/tool-response`, {
       method: 'POST',

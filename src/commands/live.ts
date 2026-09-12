@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from '../helpers.js';
+import { DevicApiError } from '../errors.js';
 import { ConversationFailure, explainFailure, requireActiveAssistant } from '../live/failures.js';
 import { LiveRenderer, safe } from '../live/render.js';
 import { localTools, runLocalTool } from '../live/local-tools.js';
@@ -136,6 +137,62 @@ export function registerLiveCommand(program: Command): void {
         } finally { active = undefined; renderer.finish(); }
       }
 
+      async function switchAssistant(target: string): Promise<void> {
+        if (!target) {
+          renderer.busy('Loading assistants');
+          const assistants = (await client.getAssistants()).filter(a => a.state !== 'inactive' && a.state !== 'coming_soon');
+          renderer.finish();
+          if (!assistants.length) { note('No active assistants available.'); return; }
+          note(assistants.map((a, i) => `${i + 1}. ${a.name}`).join('\n'));
+          const selection = await question('\nChoose a number (Enter to cancel) › ');
+          if (!selection || closed) return;
+          const selected = /^\d+$/.test(selection) ? assistants[Number(selection) - 1] : undefined;
+          if (!selected) { note('Choose one of the listed numbers.'); return; }
+          target = selected.identifier;
+        }
+        renderer.busy('Loading assistant');
+        const assistant = await client.getAssistant(target);
+        requireActiveAssistant(assistant);
+        if (closed) return;
+        if (identifier === assistant.identifier && !options.agent) { note(`Already chatting with ${assistant.name}.`); return; }
+        identifier = assistant.identifier;
+        options.agent = false;
+        chatUid = undefined; threadId = undefined; state = ''; tasks = '';
+        useStream = !options.polling;
+        answered.clear(); renderer.reset(); renderer.setAssistantName(assistant.name);
+        note(`${assistant.name} · new conversation`);
+      }
+
+      async function compact(): Promise<void> {
+        if (options.agent) { note('/compact currently supports assistant conversations.'); return; }
+        if (!chatUid) { note('Send a message before compacting this conversation.'); return; }
+        renderer.busy('Compacting context');
+        let result: Awaited<ReturnType<typeof client.compactConversation>>;
+        try { result = await client.compactConversation(identifier, chatUid); }
+        catch (error) {
+          if (error instanceof DevicApiError && error.statusCode === 404) {
+            note('Compaction is unavailable for this conversation on this API. The public compaction endpoint requires an updated backend.');
+            return;
+          }
+          throw error;
+        }
+        if (result.compacted) {
+          const count = result.checkpoint?.compactedMessageCount;
+          note(`Context compacted${typeof count === 'number' ? ` · ${count} messages summarized` : ''}. You can continue chatting.`);
+        } else {
+          const reasons: Record<string, string> = {
+            empty: 'There is no context to compact yet.',
+            'tail-covers-everything': 'The conversation is still short; all messages belong to the recent context.',
+            'nothing-new': 'The context is already compacted; there is nothing new to summarize.',
+            'not-worth-it': 'The context is too small for compaction to help.',
+            'below-threshold': 'The context does not need compaction yet.',
+            disabled: 'Compaction is disabled for this conversation.',
+            failed: 'Compaction could not complete. Your conversation is preserved.',
+          };
+          note(reasons[result.reason || ''] || 'No compaction was performed. Your conversation is preserved.');
+        }
+      }
+
       async function send(message: string, alreadyVisible = false): Promise<void> {
         if (options.agent) renderer.reset();
         renderer.user(message, alreadyVisible);
@@ -173,7 +230,9 @@ export function registerLiveCommand(program: Command): void {
           if (!input) continue;
           if (input === '/exit') break;
           try {
-            if (input === '/help') note('/follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            if (input === '/help') note('/assistant [identifier] · /compact · /follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            else if (input === '/assistant' || input.startsWith('/assistant ')) await switchAssistant(input.slice('/assistant'.length).trim());
+            else if (input === '/compact') await compact();
             else if (input === '/status') note(`${options.agent ? 'Agent' : 'Assistant'}: ${identifier}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nTransport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
             else if (input === '/follow') await follow();
             else if (input === '/new') { chatUid = undefined; threadId = undefined; state = ''; renderer.reset(); note('Next prompt starts a new conversation or execution.'); }
