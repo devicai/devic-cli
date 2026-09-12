@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
-import type { ChatMessage } from '../types.js';
+import type { ChatMessage, RealtimeChatHistory } from '../types.js';
 
 export function safe(value: string): string {
   return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
@@ -11,6 +11,9 @@ interface DisplayOptions { tty?: boolean; color?: boolean; columns?: () => numbe
 export class LiveRenderer {
   private texts = new Map<string, string>();
   private tools = new Set<string>();
+  private assistantName = 'Assistant';
+  private settledPartials = new Set<string>();
+  private partial?: { id: string; text: string; baseline: Set<string> };
   private active = '';
   private echoed?: string;
   private timer?: ReturnType<typeof setInterval>;
@@ -25,6 +28,7 @@ export class LiveRenderer {
     this.color = options.color ?? (this.tty && process.env.NO_COLOR === undefined);
   }
   private ink(code: string, text: string): string { return this.color ? `\x1b[${code}m${text}\x1b[0m` : text; }
+  setAssistantName(name: string): void { this.assistantName = safe(name).replace(/\s+/g, ' ').trim() || 'Assistant'; }
   banner(): void { this.write(`\n  ${this.ink('36;1', '◆ devic')}  ${this.ink('2', '/help for commands')}\n`); }
   prompt(): string { this.finish(); return `\n${this.ink('36;1', 'you ›')} `; }
   user(text: string, alreadyVisible = false): void {
@@ -57,7 +61,30 @@ export class LiveRenderer {
     if (this.active) this.write('\n');
     this.active = '';
   }
-  reset(): void { this.finish(); this.texts.clear(); this.tools.clear(); this.echoed = undefined; }
+  reset(): void { this.finish(); this.texts.clear(); this.tools.clear(); this.echoed = undefined; this.partial = undefined; this.settledPartials.clear(); }
+  snapshot(snapshot: RealtimeChatHistory): void {
+    const history = snapshot.chatHistory || [];
+    if (this.partial) {
+      const partial = this.partial;
+      const final = history.find((message, index) => message.role === 'assistant' &&
+        !partial.baseline.has(message.uid || `${index}:${message.role}`) &&
+        safe(this.text(message)).startsWith(partial.text) && partial.text.length > 0);
+      if (final) {
+        const id = final.uid || `${history.indexOf(final)}:${final.role}`;
+        this.texts.set(id, partial.text);
+        this.settledPartials.add(partial.id);
+        if (this.active === partial.id) this.active = id;
+        this.partial = undefined;
+      }
+    }
+    this.messages(history);
+    const streaming = snapshot.status === 'processing' ? snapshot.streamingMessage : undefined;
+    if (streaming && !this.settledPartials.has(streaming.uid || `${history.length}:assistant`) && !history.some(message => message.uid === streaming.uid)) {
+      const id = streaming.uid || `${history.length}:assistant`;
+      this.partial = { id, text: safe(this.text(streaming)), baseline: this.partial?.baseline || new Set(history.map((m, i) => m.uid || `${i}:${m.role}`)) };
+      this.messages([...history, streaming]);
+    } else if (['completed', 'error', 'limit_exceeded'].includes(snapshot.status)) this.partial = undefined;
+  }
   messages(messages: ChatMessage[]): void {
     // Readline has already displayed the submitted prompt. Match its latest
     // occurrence, so repeated prompts in the history are not accidentally hidden.
@@ -78,7 +105,7 @@ export class LiveRenderer {
           this.clearActivity();
           if (this.active !== id || !text.startsWith(previous)) {
             this.finish();
-            this.write(`\n${this.ink(message.role === 'user' ? '36;1' : '35;1', message.role === 'user' ? 'you ›' : 'devic ›')} `);
+            this.write(`\n${this.ink(message.role === 'user' ? '36;1' : '35;1', message.role === 'user' ? 'you ›' : `${this.assistantName} ›`)} `);
             this.active = id;
           }
           this.write(text.startsWith(previous) ? text.slice(previous.length) : text);

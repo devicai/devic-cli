@@ -109,6 +109,9 @@ export type RealtimeStatus =
   | 'limit_exceeded';
 
 export interface RealtimeChatHistory {
+  error?: string | { message?: string };
+  errorMessage?: string;
+  stopReason?: string;
   streamingMessage?: ChatMessage;
   chatUID: string;
   clientUID: string;

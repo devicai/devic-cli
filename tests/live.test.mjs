@@ -26,7 +26,7 @@ test('renderer appends partials once and strips terminal escape commands', () =>
   const renderer = new LiveRenderer(text => { output += text; });
   renderer.messages([message('H')]); renderer.messages([message('Hello')]);
   renderer.messages([message('Hello')]); renderer.messages([message('Hello\x1b[2J!')]);
-  assert.equal(output, '\ndevic › Hello!');
+  assert.equal(output, '\nAssistant › Hello!');
 });
 
 test('local tools require approval and reject traversal and symlink escapes', async () => {
@@ -45,7 +45,9 @@ test('local tools require approval and reject traversal and symlink escapes', as
 async function runMock(mode) {
   let sends = 0;
   const server = createServer(async (req, res) => {
-    if (req.url.includes('/messages')) {
+    if (req.url === '/api/v1/assistants/test') {
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({name:'Assistant',state:'active'}));
+    } else if (req.url.includes('/messages')) {
       sends++; for await (const _ of req) {};
       res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ chatUid: 'mock-chat' }));
     } else if (req.url.includes('/stream?')) {
@@ -67,7 +69,7 @@ async function runMock(mode) {
     });
     let output = ''; child.stdout.on('data', c => { output += c; }); child.stderr.on('data', c => { output += c; });
     const code = await new Promise(resolve => child.on('exit', resolve));
-    assert.equal(code, 0, output); assert.equal(sends, 1); assert.match(output, /devic › Hello/);
+    assert.equal(code, 0, output); assert.equal(sends, 1); assert.match(output, /Assistant › Hello/);
     assert.doesNotMatch(output, /mock-chat|completed|processing|SSE|polling|\x1b/);
     assert.equal((output.match(/Hello/g) || []).length, 1, output);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
@@ -79,6 +81,7 @@ test('CLI falls back on missing SSE without resending the user message', () => r
 test('agent follow renders tasks and stops for approval', async () => {
   const server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/v1/agents/agent') { res.end(JSON.stringify({name:'Agent'})); return; }
     res.end(JSON.stringify({ state: 'paused_for_approval', threadContent: [message('Review needed')], tasks: [{ title: 'Inspect input', completed: true }] }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -134,4 +137,44 @@ test('TTY activity animates and is cleared on output; pipes stay plain', async (
   const pipe = new LiveRenderer(text => { plain += text; }, { tty: false, color: false });
   pipe.busy(); pipe.messages([message('Ready')]); pipe.finish();
   assert.doesNotMatch(plain, /Thinking|\x1b/);
+});
+
+
+test('a provisional streaming UID becomes the final UID without duplicate text', () => {
+  let output = '';
+  const renderer = new LiveRenderer(text => { output += text; }, { tty: false });
+  renderer.setAssistantName('Test CLI');
+  const user = { uid: 'u', role: 'user', content: { message: 'Hi' } };
+  renderer.snapshot({ status: 'processing', chatHistory: [user], streamingMessage: { ...message('Hello'), uid: 'temporary' } });
+  const final = { ...message('Hello world'), uid: 'persistent' };
+  renderer.snapshot({ status: 'processing', chatHistory: [user, final], streamingMessage: { ...message('Hello'), uid: 'temporary' } });
+  renderer.snapshot({ status: 'completed', chatHistory: [user, final] });
+  assert.equal((output.match(/Hello/g) || []).length, 1);
+  assert.match(output, /Test CLI › Hello world/);
+  // Same answer to a subsequent prompt is legitimate and must remain visible.
+  const user2 = { ...user, uid: 'u2' };
+  renderer.snapshot({ status: 'processing', chatHistory: [user, final, user2], streamingMessage: { ...message('Hello'), uid: 'temporary2' } });
+  renderer.snapshot({ status: 'completed', chatHistory: [user, final, user2, { ...final, uid: 'persistent2' }] });
+  renderer.finish();
+  assert.equal((output.match(/Hello world/g) || []).length, 2);
+});
+
+test('an archived assistant is rejected before creating a cloud conversation', async () => {
+  let sends = 0;
+  const server = createServer((req, res) => {
+    if (req.method === 'POST') sends++;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ name: 'Archived assistant', state: 'inactive' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const child = spawn(process.execPath, ['bin/devic.js', 'live', 'archived', '-m', 'hello'], {
+      cwd: new URL('..', import.meta.url),
+      env: { ...process.env, DEVIC_API_KEY: 'test-key', DEVIC_BASE_URL: `http://127.0.0.1:${server.address().port}` },
+    });
+    let output = ''; child.stdout.on('data', c => { output += c; }); child.stderr.on('data', c => { output += c; });
+    const code = await new Promise(resolve => child.on('exit', resolve));
+    assert.equal(code, 1); assert.equal(sends, 0); assert.match(output, /is archived/);
+    assert.doesNotMatch(output, /Use \/follow to inspect/);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });

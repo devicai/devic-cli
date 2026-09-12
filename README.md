@@ -454,3 +454,12 @@ and developer context and raw tool payloads are hidden. IDs and transport detail
 appear only through `/status`; a successful streaming-to-polling fallback is
 silent. Errors and approval requests remain visible. Redirected output is plain
 text without animation, and `NO_COLOR` disables colors in a terminal.
+
+Assistant replies use the assistant's display name (agent replies use the agent
+name). The terminal reconciles provisional streaming IDs with their persisted
+messages within the current reply, so final snapshots do not repeat streamed
+text. Identical replies in separate turns remain visible.
+
+Before sending, the CLI checks whether the assistant is archived. Failed cloud
+executions show available error details and explain that `/follow` only observes
+state; it does not retry a failed execution or unarchive an assistant.

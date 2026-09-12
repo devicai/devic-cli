@@ -25,6 +25,12 @@ class API(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'{"chatUid":"tty-chat"}')
     def do_GET(self):
+        if self.path == '/api/v1/assistants/fixture':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"name":"Fixture assistant","state":"active"}')
+            return
         result = {'chatHistory': [], 'status': 'completed' if submitted else 'waiting_for_tool_response'}
         if submitted:
             result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': 'LOCAL_TOOL_OK'}}]
@@ -67,17 +73,18 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         until('you ›')
         os.write(master, b'/exit\n')
         until('/exit')
-        try:
-            assert proc.wait(timeout=8) == 0
-        except subprocess.TimeoutExpired:
-            for _ in range(10):
-                if not select.select([master], [], [], .1)[0]:
+        # Keep consuming the PTY while waiting: terminal writes may block the
+        # child until the terminal emulator (this test) reads them.
+        deadline = time.monotonic() + 8
+        while proc.poll() is None:
+            assert time.monotonic() < deadline, repr(transcript + output)
+            if select.select([master], [], [], .1)[0]:
+                try:
+                    chunk = os.read(master, 65536).decode(errors='replace')
+                    transcript += chunk
+                except OSError:
                     break
-                chunk = os.read(master, 65536)
-                if not chunk:
-                    break
-                output += chunk.decode(errors='replace')
-            raise AssertionError(repr(output))
+        assert proc.wait(timeout=2) == 0
         assert 'tty-chat' not in transcript
         assert 'waiting_for_tool_response' not in transcript
         assert 'RAW_PAYLOAD' not in transcript

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from '../helpers.js';
+import { ConversationFailure, explainFailure, requireActiveAssistant } from '../live/failures.js';
 import { LiveRenderer, safe } from '../live/render.js';
 import { localTools, runLocalTool } from '../live/local-tools.js';
 import type { RealtimeChatHistory, ToolCallResponse } from '../types.js';
@@ -79,12 +80,7 @@ export function registerLiveCommand(program: Command): void {
             if (!chatUid) return;
             let gate: RealtimeChatHistory | undefined;
             const receive = (snapshot: RealtimeChatHistory) => {
-              const messages = [...(snapshot.chatHistory || [])];
-              if (snapshot.streamingMessage && snapshot.status === 'processing') {
-                const index = messages.findIndex(m => m.uid === snapshot.streamingMessage!.uid);
-                if (index < 0) messages.push(snapshot.streamingMessage); else messages[index] = snapshot.streamingMessage;
-              }
-              renderer.messages(messages);
+              renderer.snapshot(snapshot);
               renderer.busy(snapshot.status === 'handed_off' ? 'Working with a subagent' : 'Thinking');
               state = snapshot.status;
               if (['completed', 'error', 'limit_exceeded', 'waiting_for_tool_response'].includes(snapshot.status)) gate = snapshot;
@@ -113,7 +109,7 @@ export function registerLiveCommand(program: Command): void {
             const snapshot = gate as RealtimeChatHistory | undefined;
             if (snapshot) {
               if (snapshot.status === 'error' || snapshot.status === 'limit_exceeded') {
-                throw new Error(snapshot.limitExceeded?.message || `Conversation ${snapshot.status}`);
+                throw await explainFailure(client, identifier, snapshot);
               }
               if (snapshot.status === 'completed') return;
               const calls = snapshot.pendingToolCalls || [];
@@ -151,6 +147,9 @@ export function registerLiveCommand(program: Command): void {
           state = ''; tasks = '';
 
         } else {
+          const assistant = await client.getAssistant(identifier);
+          requireActiveAssistant(assistant);
+          renderer.setAssistantName(assistant.name);
           const result = await client.sendMessageAsync(identifier, { message, chatUid,
             ...(options.localTools ? { tools: localTools } : {}),
           });
@@ -162,6 +161,8 @@ export function registerLiveCommand(program: Command): void {
       }
 
       try {
+        const entity = options.agent ? await client.getAgent(identifier) : await client.getAssistant(identifier);
+        renderer.setAssistantName(entity.name);
         if (interactive) renderer.banner();
         if (options.message) { await send(options.message); return; }
         if (threadId || chatUid) await follow();
@@ -186,12 +187,12 @@ export function registerLiveCommand(program: Command): void {
               await follow();
             } else if (input.startsWith('/')) note('Unknown command. Use /help.');
             else await send(input, true);
-          } catch (error) { note(`Error: ${error instanceof Error ? error.message : String(error)}. Use /follow to inspect current execution.`); }
+          } catch (error) { note(`Error: ${error instanceof Error ? error.message : String(error)}${error instanceof ConversationFailure ? '' : '. Use /follow to inspect current execution.'}`); }
         }
       } finally { renderer.finish(); rl?.close(); process.removeListener('SIGINT', detach); }
       // This foreground command is finished. Aborting SSE can leave a fetch
       // preconnect alive; do not make an explicit /exit wait for its timeout.
-      await new Promise<void>(resolve => process.stdout.write('', () => resolve()));
+      // This path is interactive: POSIX TTY writes are synchronous.
       process.exit(0);
     });
 }
