@@ -518,3 +518,15 @@ To reattach when starting the CLI, the existing option is:
 ```bash
 node devic-ai/devic-cli/bin/devic.js live <assistant-identifier> --chat-uid <chatUID>
 ```
+
+In interactive terminals, user and assistant messages render Markdown: headings,
+strong/emphasized/deleted text, links, inline/fenced code, lists, checkboxes and
+quotes. Tables become vertical column/value records to fit narrow windows. Code
+uses a distinct color and preserves literal Markdown characters. Links show their
+URLs without opening them; images are represented by their label and URL.
+
+During streaming, completed blocks enter scrollback while the unfinished block
+has a live preview of up to six lines. The complete block replaces its preview
+when it finishes; older conversation output is not redrawn. `NO_COLOR` disables
+styling but retains layout. Redirected output retains the original Markdown, and
+input sent to the API remains unchanged.

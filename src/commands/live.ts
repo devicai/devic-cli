@@ -307,7 +307,7 @@ export function registerLiveCommand(program: Command): void {
               else await client.resumeThread(threadId);
               await follow();
             } else if (input.startsWith('/')) note('Unknown command. Use /help.');
-            else await send(input, true);
+            else await send(input);
           } catch (error) { note(`Error: ${error instanceof Error ? error.message : String(error)}${error instanceof ConversationFailure ? '' : '. Use /follow to inspect current execution.'}`); }
         }
       } finally { renderer.finish(); rl?.close(); process.removeListener('SIGINT', detach); }

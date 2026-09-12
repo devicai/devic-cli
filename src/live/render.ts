@@ -1,3 +1,4 @@
+import { MarkdownStream, renderMarkdown } from './markdown.js';
 import { stripVTControlCharacters } from 'node:util';
 import type { ChatMessage, RealtimeChatHistory, RecalledMemoryRecord } from '../types.js';
 
@@ -5,7 +6,7 @@ export function safe(value: string): string {
   return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 }
 
-interface DisplayOptions { tty?: boolean; color?: boolean; columns?: () => number }
+interface DisplayOptions { tty?: boolean; color?: boolean; columns?: () => number; rows?: () => number }
 
 /** A scrollback-first conversation; only the transient activity line is redrawn. */
 export class LiveRenderer {
@@ -17,6 +18,8 @@ export class LiveRenderer {
   private settledPartials = new Set<string>();
   private partial?: { id: string; text: string; baseline: Set<string> };
   private active = '';
+  private markdown?: MarkdownStream;
+  private markdownSource = '';
   private echoed?: string;
   private timer?: ReturnType<typeof setInterval>;
   private spinnerVisible = false;
@@ -36,7 +39,7 @@ export class LiveRenderer {
   user(text: string, alreadyVisible = false): void {
     this.finish();
     this.echoed = safe(text);
-    if (!alreadyVisible) this.write(`\n${this.ink('36;1', 'you ›')} ${safe(text)}\n`);
+    if (!alreadyVisible) this.write(`\n${this.ink('36;1', 'you ›')} ${this.tty ? renderMarkdown(safe(text), this.color, this.options.columns?.() || process.stdout.columns || 80) : safe(text)}\n`);
   }
   note(text: string): void {
     this.finish(); this.write(`\n  ${this.ink('2', safe(text))}\n`);
@@ -46,7 +49,7 @@ export class LiveRenderer {
     if (!this.tty || this.timer || this.active) return;
     const tick = () => {
       const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-      const width = Math.max(8, (this.options.columns?.() ?? process.stdout.columns ?? 80) - 6);
+      const width = Math.max(8, (this.options.columns?.() || process.stdout.columns || 80) - 6);
       this.write(`\r\x1b[2K  ${this.ink('36', frames[this.frame++ % frames.length])} ${this.ink('2', this.label.slice(0, width))}`);
       this.spinnerVisible = true;
     };
@@ -60,6 +63,7 @@ export class LiveRenderer {
   }
   finish(): void {
     this.clearActivity();
+    this.markdown?.finish(); this.markdown = undefined; this.markdownSource = '';
     if (this.active) this.write('\n');
     this.active = '';
   }
@@ -110,8 +114,16 @@ export class LiveRenderer {
             this.finish();
             this.write(`\n${this.ink(message.role === 'user' ? '36;1' : '35;1', message.role === 'user' ? 'you ›' : `${this.assistantName} ›`)} `);
             this.active = id;
+            if (this.tty) {
+              this.write('\n');
+              this.markdown = new MarkdownStream(text => this.write(text), this.color,
+                () => this.options.columns?.() || process.stdout.columns || 80,
+                () => this.options.rows?.() || process.stdout.rows || 24);
+            }
           }
-          this.write(text.startsWith(previous) ? text.slice(previous.length) : text);
+          const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+          if (this.markdown) { this.markdownSource += delta; this.markdown.update(this.markdownSource); }
+          else this.write(delta);
         }
         this.texts.set(id, text);
       }

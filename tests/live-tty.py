@@ -74,7 +74,7 @@ class API(http.server.BaseHTTPRequestHandler):
             return
         result = {'chatHistory': [], 'status': 'completed' if submitted else 'waiting_for_tool_response'}
         if submitted:
-            result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': 'TURN_DONE ' + messages[-1][1]['message'] if messages and messages[-1][1]['message'].startswith('continue ') else 'LOCAL_TOOL_OK'}}]
+            result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': '## Markdown reply\n\n**Bold response**\n\n- Rendered item' if messages and messages[-1][1]['message'] == '**Markdown user**' else 'TURN_DONE ' + messages[-1][1]['message'] if messages and messages[-1][1]['message'].startswith('continue ') else 'LOCAL_TOOL_OK'}}]
         else:
             result['pendingToolCalls'] = [{'id': 'read1', 'type': 'function', 'function': {'name': 'read_file', 'arguments': '{"path":"fixture.txt"}'}}]
         self.send_response(200)
@@ -184,6 +184,11 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         until('TURN_DONE continue direct')
         until('you ›')
         assert messages[-1][1]['chatUid'] == 'recent-a'
+        os.write(master, b'**Markdown user**\n')
+        until('you › Markdown user')
+        until('• Rendered item')
+        until('you ›')
+        assert messages[-1][1]['message'] == '**Markdown user**'
         os.write(master, b'/exit\n')
         until('/exit')
         # Keep consuming the PTY while waiting: terminal writes may block the
@@ -204,7 +209,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories, conversation resume and /exit')
+        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories, conversation resume, Markdown and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

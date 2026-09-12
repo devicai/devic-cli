@@ -148,7 +148,7 @@ export class LiveInput extends EventEmitter {
       if (this.pending.picker) { if (matches.length) this.finish(matches[this.selected].value, false); return; }
       const value = matches.length ? matches[this.selected].value : this.text.join('');
       if (value.trim() && this.pending.options.length) this.history.push(value);
-      this.finish(value, true); return;
+      this.finish(value, !this.pending.options.length || value.trim().startsWith('/')); return;
     } else if (key.name === 'left' || (key.ctrl && key.name === 'b')) this.cursor = Math.max(0, this.cursor - 1);
     else if (key.name === 'right' || (key.ctrl && key.name === 'f')) this.cursor = Math.min(this.text.length, this.cursor + 1);
     else if (key.name === 'home' || (key.ctrl && key.name === 'a')) this.cursor = 0;
