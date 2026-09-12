@@ -64,6 +64,7 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   summary?: string;
+  messageTokenUsage?: ThreadTokenUsage;
 }
 
 export interface PreviousMessage {
@@ -112,6 +113,7 @@ export interface RealtimeChatHistory {
   error?: string | { message?: string };
   errorMessage?: string;
   stopReason?: string;
+  recalledMemories?: RecalledMemoryRecord[];
   streamingMessage?: ChatMessage;
   chatUID: string;
   clientUID: string;
@@ -130,6 +132,25 @@ export interface RealtimeChatHistory {
   };
 }
 
+export interface RecalledMemoryRecord {
+  uid: string;
+  messageUid?: string;
+  toolCallId?: string;
+  source: string;
+  query?: string;
+  facts?: Array<{ fact: string; relation?: string; source?: string | null; target?: string | null; validAt?: string | null }>;
+  entities?: Array<{ id: string; name: string; type: string; summary?: string | null }>;
+  turns?: Array<{ role: string; content: string }>;
+  timestampMs: number;
+}
+
+export interface ContextCheckpoint {
+  timestampMs: number;
+  compactedMessageCount: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
 export interface ChatHistory {
   chatUID: string;
   clientUID: string;
@@ -140,6 +161,10 @@ export interface ChatHistory {
   creationTimestampMs: number;
   lastEditTimestampMs?: number;
   llm?: string;
+  provider?: string;
+  contextWindow?: number;
+  recalledMemories?: RecalledMemoryRecord[];
+  compactions?: ContextCheckpoint[];
   inputTokens?: number;
   outputTokens?: number;
   metadata?: Record<string, unknown>;
@@ -257,6 +282,19 @@ export interface ThreadStateChange {
 }
 
 export interface ThreadTokenUsage {
+  provider?: string;
+  model?: string;
+  inputCachedTokens?: number;
+  inputCacheWriteTokens?: number;
+  outputCachedTokens?: number;
+  reasoningOutputTokens?: number;
+  secondaryReasoningOutputTokens?: number;
+  secondaryCost?: number;
+  secondaryInputTokens?: number;
+  secondaryOutputTokens?: number;
+  secondaryInputCachedTokens?: number;
+  secondaryInputCacheWriteTokens?: number;
+  secondaryOutputCachedTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   cost?: { totalCost?: number };

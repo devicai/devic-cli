@@ -491,3 +491,16 @@ agent mode. Outside a menu, ↑/↓ browses submitted prompt history; left/right
 Home/End, Backspace/Delete and Ctrl+U/Ctrl+K edit the current input. Long input
 scrolls horizontally, and menus adapt to terminal width/height and resize events.
 No additional runtime dependencies are required.
+
+`/status` fetches persisted conversation usage: model/provider, reported total
+input/output/cache/reasoning and auxiliary tokens, and recorded USD cost including
+auxiliary calls. It also shows model context capacity, the last recorded input
+usage and compaction statistics. Cumulative tokens and the last recorded input
+(which can include retries) are **not** the current context size. Missing metrics
+remain unavailable; totals sum the counters the API reports. Context capacity
+requires the backend's optional `contextWindow` history field and a known model.
+
+Recalled memories appear as a compact activity line, deduplicated across streaming
+updates. `/memories` shows facts, graph entities and previous-session turns, with
+source and query. It refreshes persisted recalls and falls back to those already
+received if the refresh fails. Switching assistants or `/new` clears that view.

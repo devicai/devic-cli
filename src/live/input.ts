@@ -9,6 +9,7 @@ export function commandOptions(agent = false): MenuOption[] {
     ...(!agent ? [['/compact', 'Compact conversation context']] : []),
     ['/new', 'Start a new conversation'], ['/follow', 'Follow the current execution'],
     ['/stop', 'Stop or pause cloud execution'], ['/status', 'Show session details'],
+    ...(!agent ? [['/memories', 'Inspect recalled memories']] : []),
     ['/help', 'Show available commands'], ['/exit', 'Leave the terminal'],
     ...(agent ? [['/approve', 'Approve execution'], ['/reject', 'Reject execution'], ['/pause', 'Pause execution'], ['/resume', 'Resume execution']] : []),
   ];

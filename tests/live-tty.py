@@ -47,6 +47,12 @@ class API(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(assistants if self.path == '/api/v1/assistants' else target or {'message': 'Assistant not found'}).encode())
             return
+        if self.path.endswith('/chats/tty-chat'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'contextWindow': 128000, 'tokenUsage': {'inputTokens': 100, 'outputTokens': 20, 'cost': {'totalCost': 0.01}}, 'recalledMemories': [{'uid': 'recall', 'source': 'search_memory', 'facts': [{'fact': 'TTY memory detail'}]}]}).encode())
+            return
         result = {'chatHistory': [], 'status': 'completed' if submitted else 'waiting_for_tool_response'}
         if submitted:
             result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': 'LOCAL_TOOL_OK'}}]
@@ -64,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
     master, slave = pty.openpty()
     proc = subprocess.Popen(['node', 'bin/devic.js', 'live', 'fixture', '--local-tools', '--workspace', root],
         cwd=Path(__file__).resolve().parent.parent, stdin=slave, stdout=slave, stderr=slave,
-        env={**os.environ, 'DEVIC_API_KEY': 'test-key', 'DEVIC_BASE_URL': f'http://127.0.0.1:{server.server_port}'})
+        env={**os.environ, 'TERM': 'xterm-256color', 'NO_COLOR': '1', 'DEVIC_API_KEY': 'test-key', 'DEVIC_BASE_URL': f'http://127.0.0.1:{server.server_port}'})
     os.close(slave)
     output = ''
     transcript = ''
@@ -86,6 +92,12 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert not submitted
         os.write(master, b'y\n')
         until('LOCAL_TOOL_OK')
+        until('you ›')
+        os.write(master, b'/status\n')
+        until('Context window: 128,000 tokens')
+        until('you ›')
+        os.write(master, b'/memories\n')
+        until('TTY memory detail')
         until('you ›')
         os.write(master, b'/assistant archived\n')
         until('is archived')
@@ -142,13 +154,13 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
                 except OSError:
                     break
         assert proc.wait(timeout=2) == 0
-        assert 'tty-chat' not in transcript
+        assert 'Chat: tty-chat' in transcript
         assert 'waiting_for_tool_response' not in transcript
         assert 'RAW_PAYLOAD' not in transcript
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction and /exit')
+        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
-import type { ChatMessage, RealtimeChatHistory } from '../types.js';
+import type { ChatMessage, RealtimeChatHistory, RecalledMemoryRecord } from '../types.js';
 
 export function safe(value: string): string {
   return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
@@ -11,6 +11,8 @@ interface DisplayOptions { tty?: boolean; color?: boolean; columns?: () => numbe
 export class LiveRenderer {
   private texts = new Map<string, string>();
   private tools = new Set<string>();
+  private memories = new Map<string, RecalledMemoryRecord>();
+  private memorySignatures = new Map<string, string>();
   private assistantName = 'Assistant';
   private settledPartials = new Set<string>();
   private partial?: { id: string; text: string; baseline: Set<string> };
@@ -61,8 +63,9 @@ export class LiveRenderer {
     if (this.active) this.write('\n');
     this.active = '';
   }
-  reset(): void { this.finish(); this.texts.clear(); this.tools.clear(); this.echoed = undefined; this.partial = undefined; this.settledPartials.clear(); }
+  reset(): void { this.finish(); this.texts.clear(); this.tools.clear(); this.memories.clear(); this.memorySignatures.clear(); this.echoed = undefined; this.partial = undefined; this.settledPartials.clear(); }
   snapshot(snapshot: RealtimeChatHistory): void {
+    this.recalled(snapshot.recalledMemories || []);
     const history = snapshot.chatHistory || [];
     if (this.partial) {
       const partial = this.partial;
@@ -117,6 +120,51 @@ export class LiveRenderer {
       }
       if (message.role === 'tool' && message.summary) this.tool(message.tool_call_id || id, message.summary);
     });
+  }
+  recalled(records: RecalledMemoryRecord[], announce = true): void {
+    for (const record of records) {
+      const prior = this.memories.get(record.uid);
+      const merged = { ...prior, ...record };
+      const facts = [...new Set((merged.facts || []).map(f => f.fact.trim().toLowerCase()).filter(Boolean))];
+      const entities = [...new Set((merged.entities || []).map(e => e.name.trim().toLowerCase()).filter(Boolean))];
+      const turns = merged.turns?.length || 0;
+      if (!facts.length && !entities.length && !turns) continue;
+      this.memories.set(record.uid, merged);
+      const signature = JSON.stringify([merged.source, merged.query, merged.facts, merged.entities, merged.turns]);
+      if (this.memorySignatures.get(record.uid) === signature) continue;
+      this.memorySignatures.set(record.uid, signature);
+      if (announce) {
+        this.finish();
+        this.write(`  ${this.ink('35', '◇')} ${this.ink('35', 'Recalled memories')} · ${facts.length} facts · ${entities.length} entities · ${turns} turns · ${safe(this.memorySource(merged.source))}  ${this.ink('2', '/memories for details')}\n`);
+      }
+    }
+  }
+  showMemories(): void {
+    if (!this.memories.size) { this.note('No recalled memories in this conversation.'); return; }
+    this.finish();
+    for (const record of this.memories.values()) {
+      this.write(`\n  ${this.ink('35;1', '◇ Recalled memories')} · ${safe(this.memorySource(record.source))}\n`);
+      if (record.query) this.write(`    Query: ${safe(record.query)}\n`);
+      const facts = new Set<string>(), entities = new Set<string>();
+      for (const fact of record.facts || []) {
+        const key = fact.fact.trim().toLowerCase();
+        if (!key || facts.has(key)) continue;
+        facts.add(key);
+        const relation = [fact.source, fact.relation, fact.target].filter(Boolean).join(' → ');
+        this.write(`    • ${safe(fact.fact)}${relation ? `\n      ${this.ink('2', safe(relation))}` : ''}\n`);
+      }
+      for (const entity of record.entities || []) {
+        const key = entity.name.trim().toLowerCase();
+        if (!key || entities.has(key)) continue;
+        entities.add(key);
+        this.write(`    ◇ ${safe(entity.name)} · ${safe(entity.type)}${entity.summary ? `\n      ${safe(entity.summary)}` : ''}\n`);
+      }
+      for (const turn of record.turns || []) this.write(`    ${safe(turn.role)} › ${safe(turn.content)}\n`);
+    }
+  }
+  private memorySource(source: string): string {
+    return ({ conversation_start: 'Automatic recall', search_memory: 'Memory search',
+      search_memory_nodes: 'Graph node search', explore_memory_graph: 'Graph exploration' } as Record<string, string>)[source] || source;
   }
   private text(message: ChatMessage): string {
     return typeof message.content === 'string' ? message.content : message.content?.message || '';

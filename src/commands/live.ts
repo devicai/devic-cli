@@ -5,6 +5,7 @@ import { createClient } from '../helpers.js';
 import { DevicApiError } from '../errors.js';
 import { ConversationFailure, explainFailure, requireActiveAssistant } from '../live/failures.js';
 import { LiveRenderer, safe } from '../live/render.js';
+import { usageStatus } from '../live/status.js';
 import { localTools, runLocalTool } from '../live/local-tools.js';
 import type { RealtimeChatHistory, ToolCallResponse } from '../types.js';
 
@@ -34,6 +35,7 @@ export function registerLiveCommand(program: Command): void {
       let threadId = options.thread;
       let active: AbortController | undefined;
       let closed = false;
+      let displayName = identifier;
       let state = '';
       let tasks = '';
       let useStream = !options.polling;
@@ -158,7 +160,7 @@ export function registerLiveCommand(program: Command): void {
         options.agent = false;
         chatUid = undefined; threadId = undefined; state = ''; tasks = '';
         useStream = !options.polling;
-        answered.clear(); renderer.reset(); renderer.setAssistantName(assistant.name);
+        answered.clear(); renderer.reset(); renderer.setAssistantName(assistant.name); displayName = assistant.name;
         note(`${assistant.name} · new conversation`);
       }
 
@@ -205,7 +207,7 @@ export function registerLiveCommand(program: Command): void {
         } else {
           const assistant = await client.getAssistant(identifier);
           requireActiveAssistant(assistant);
-          renderer.setAssistantName(assistant.name);
+          renderer.setAssistantName(assistant.name); displayName = assistant.name;
           const result = await client.sendMessageAsync(identifier, { message, chatUid,
             ...(options.localTools ? { tools: localTools } : {}),
           });
@@ -218,7 +220,7 @@ export function registerLiveCommand(program: Command): void {
 
       try {
         const entity = options.agent ? await client.getAgent(identifier) : await client.getAssistant(identifier);
-        renderer.setAssistantName(entity.name);
+        renderer.setAssistantName(entity.name); displayName = entity.name;
         if (interactive) renderer.banner();
         if (options.message) { await send(options.message); return; }
         if (threadId || chatUid) await follow();
@@ -229,11 +231,34 @@ export function registerLiveCommand(program: Command): void {
           if (!input) continue;
           if (input === '/exit') break;
           try {
-            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /follow /stop /new /status /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /follow /stop /new /status /memories /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
             else if (input === '/assistants') await switchAssistant('');
             else if (input === '/assistant' || input.startsWith('/assistant ')) await switchAssistant(input.slice('/assistant'.length).trim());
             else if (input === '/compact') await compact();
-            else if (input === '/status') note(`${options.agent ? 'Agent' : 'Assistant'}: ${identifier}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nTransport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
+            else if (input === '/status') {
+              note(`${options.agent ? 'Agent' : 'Assistant'}: ${displayName}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nState: ${state || 'idle'} · Transport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
+              if (options.agent && threadId) {
+                renderer.busy('Loading usage');
+                const thread = await client.getThread(threadId, true);
+                note(usageStatus({ tokenUsage: thread.tokenUsage }, thread.threadContent));
+              } else if (chatUid) {
+                renderer.busy('Loading usage');
+                const history = await client.getChatHistory(identifier, chatUid);
+                renderer.recalled(history.recalledMemories || [], false);
+                note(usageStatus(history));
+              } else note('Send a message to see conversation usage and context.');
+            }
+            else if (input === '/memories') {
+              if (options.agent) note('Recalled memories are available for assistant conversations.');
+              else {
+                if (chatUid) {
+                  renderer.busy('Loading memories');
+                  try { renderer.recalled((await client.getChatHistory(identifier, chatUid)).recalledMemories || [], false); }
+                  catch { note('Could not refresh memories; showing those received during this session.'); }
+                }
+                renderer.showMemories();
+              }
+            }
             else if (input === '/follow') await follow();
             else if (input === '/new') { chatUid = undefined; threadId = undefined; state = ''; renderer.reset(); note('Next prompt starts a new conversation or execution.'); }
             else if (input === '/stop') {
