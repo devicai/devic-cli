@@ -206,13 +206,13 @@ export class DevicApiClient {
   }
 
   async getChatHistory(assistantId: string, chatUid: string): Promise<ChatHistory> {
-    return this.request<ChatHistory>(`/api/v1/assistants/${assistantId}/chats/${chatUid}`);
+    return this.request<ChatHistory>(`/api/v1/assistants/${encodeURIComponent(assistantId)}/chats/${encodeURIComponent(chatUid)}`);
   }
 
   async listConversations(
     assistantId: string,
     opts?: { offset?: number; limit?: number; omitContent?: boolean; tenantId?: string; subtenantId?: string },
-  ): Promise<unknown> {
+  ): Promise<{ histories: ChatHistory[]; total: number; offset: number; limit: number }> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     if (opts?.limit != null) params.set('limit', String(opts.limit));

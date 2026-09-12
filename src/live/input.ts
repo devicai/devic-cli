@@ -9,7 +9,7 @@ export function commandOptions(agent = false): MenuOption[] {
     ...(!agent ? [['/compact', 'Compact conversation context']] : []),
     ['/new', 'Start a new conversation'], ['/follow', 'Follow the current execution'],
     ['/stop', 'Stop or pause cloud execution'], ['/status', 'Show session details'],
-    ...(!agent ? [['/memories', 'Inspect recalled memories']] : []),
+    ...(!agent ? [['/memories', 'Inspect recalled memories'], ['/conversations', 'Resume a recent conversation'], ['/resume', 'Resume by chat UID']] : []),
     ['/help', 'Show available commands'], ['/exit', 'Leave the terminal'],
     ...(agent ? [['/approve', 'Approve execution'], ['/reject', 'Reject execution'], ['/pause', 'Pause execution'], ['/resume', 'Resume execution']] : []),
   ];
@@ -51,8 +51,8 @@ export class LiveInput extends EventEmitter {
     process.stdin.resume();
   }
   question(prefix: string, options: MenuOption[] = []): Promise<string> { return this.begin(prefix, options, false); }
-  select(options: MenuOption[], current?: string): Promise<string> {
-    return this.begin('Assistants › ', options, true, current);
+  select(options: MenuOption[], current?: string, title = 'Assistants'): Promise<string> {
+    return this.begin(`${safe(title)} › `, options, true, current);
   }
   private begin(prefix: string, options: MenuOption[], picker: boolean, current?: string): Promise<string> {
     if (this.closed) return Promise.resolve('');

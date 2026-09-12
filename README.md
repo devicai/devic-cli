@@ -504,3 +504,17 @@ Recalled memories appear as a compact activity line, deduplicated across streami
 updates. `/memories` shows facts, graph entities and previous-session turns, with
 source and query. It refreshes persisted recalls and falls back to those already
 received if the refresh fails. Switching assistants or `/new` clears that view.
+
+Resume an assistant conversation from the terminal with `/resume <chatUID>`.
+`/conversations` lists the selected assistant's 20 most recently created chats:
+use ↑/↓ and Enter to resume, type to filter by title/UID, or Escape to cancel.
+The CLI checks the conversation's assistant before replacing the session, restores
+its history and follows the current execution. Subsequent messages use that chat
+UID. A failed selection leaves the previous session intact. In agent mode,
+`/resume` continues to resume the current paused agent thread.
+
+To reattach when starting the CLI, the existing option is:
+
+```bash
+node devic-ai/devic-cli/bin/devic.js live <assistant-identifier> --chat-uid <chatUID>
+```

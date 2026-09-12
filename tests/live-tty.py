@@ -33,7 +33,7 @@ class API(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(json.dumps({'chatUid': 'new-chat' if '/second/' in self.path else 'tty-chat'}).encode())
+        self.wfile.write(json.dumps({'chatUid': data.get('chatUid') or ('new-chat' if '/second/' in self.path else 'tty-chat')}).encode())
     def do_GET(self):
         assistants = [
             {'identifier': 'fixture', 'name': 'Fixture assistant', 'state': 'active'},
@@ -53,9 +53,28 @@ class API(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'contextWindow': 128000, 'tokenUsage': {'inputTokens': 100, 'outputTokens': 20, 'cost': {'totalCost': 0.01}}, 'recalledMemories': [{'uid': 'recall', 'source': 'search_memory', 'facts': [{'fact': 'TTY memory detail'}]}]}).encode())
             return
+        if self.path.startswith('/api/v1/assistants/second/chats?'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'histories': [
+                {'chatUID': 'recent-a', 'name': 'Recent A', 'assistantSpecializationIdentifier': 'second', 'creationTimestampMs': 2000},
+                {'chatUID': 'recent-b', 'name': 'Recent B', 'assistantSpecializationIdentifier': 'second', 'creationTimestampMs': 1000},
+            ], 'total': 2, 'offset': 0, 'limit': 20}).encode())
+            return
+        if self.path.rsplit('/', 1)[-1] in ['recent-a', 'recent-b', 'wrong', 'missing']:
+            uid = self.path.rsplit('/', 1)[-1]
+            self.send_response(404 if uid == 'missing' else 200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'message': 'Chat not found'} if uid == 'missing' else {
+                'chatUID': uid, 'name': 'Saved ' + uid, 'assistantSpecializationIdentifier': 'other' if uid == 'wrong' else 'second',
+                'chatContent': [{'uid': 'old-' + uid, 'role': 'assistant', 'content': {'message': 'HISTORY ' + uid}}],
+            }).encode())
+            return
         result = {'chatHistory': [], 'status': 'completed' if submitted else 'waiting_for_tool_response'}
         if submitted:
-            result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': 'LOCAL_TOOL_OK'}}]
+            result['chatHistory'] = [{'uid': 'answer', 'role': 'assistant', 'content': {'message': 'TURN_DONE ' + messages[-1][1]['message'] if messages and messages[-1][1]['message'].startswith('continue ') else 'LOCAL_TOOL_OK'}}]
         else:
             result['pendingToolCalls'] = [{'id': 'read1', 'type': 'function', 'function': {'name': 'read_file', 'arguments': '{"path":"fixture.txt"}'}}]
         self.send_response(200)
@@ -140,6 +159,31 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         until('Context compacted')
         until('you ›')
         assert compacted[-1] == '/api/v1/assistants/second/chats/new-chat/compact'
+        os.write(master, b'/conversations\n')
+        until('Recent conversations ›')
+        until('Enter switch')
+        os.write(master, b'\x1b')
+        until('you ›')
+        os.write(master, b'/conversations\n')
+        until('Enter switch')
+        os.write(master, b'\x1b[B\n')
+        until('HISTORY recent-b')
+        until('you ›')
+        for command, expected in [('/resume wrong', 'does not belong'), ('/resume missing', 'Chat not found')]:
+            os.write(master, (command + '\n').encode())
+            until(expected)
+            until('you ›')
+        os.write(master, b'continue selected\n')
+        until('TURN_DONE continue selected')
+        until('you ›')
+        assert messages[-1][1]['chatUid'] == 'recent-b'
+        os.write(master, b'/resume recent-a\n')
+        until('HISTORY recent-a')
+        until('you ›')
+        os.write(master, b'continue direct\n')
+        until('TURN_DONE continue direct')
+        until('you ›')
+        assert messages[-1][1]['chatUid'] == 'recent-a'
         os.write(master, b'/exit\n')
         until('/exit')
         # Keep consuming the PTY while waiting: terminal writes may block the
@@ -160,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories and /exit')
+        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories, conversation resume and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

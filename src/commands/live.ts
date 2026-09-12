@@ -164,6 +164,41 @@ export function registerLiveCommand(program: Command): void {
         note(`${assistant.name} · new conversation`);
       }
 
+      async function resumeConversation(target: string): Promise<void> {
+        if (!target) { note('Usage: /resume <chatUID> · /conversations to choose a recent chat.'); return; }
+        renderer.busy('Loading conversation');
+        const history = await client.getChatHistory(identifier, target);
+        if (history.chatUID !== target || history.assistantSpecializationIdentifier !== identifier) {
+          throw new Error('Conversation does not belong to the selected assistant');
+        }
+        if (closed) return;
+        // Validate before discarding the current display/session. Reattaching to
+        // the same chat keeps tool-response deduplication and rendered messages.
+        if (chatUid !== target) {
+          renderer.reset(); answered.clear();
+          chatUid = target; threadId = undefined; state = ''; tasks = '';
+          useStream = !options.polling;
+        }
+        note(`Resumed ${history.name || 'conversation'} · ${target}`);
+        renderer.recalled(history.recalledMemories || []);
+        renderer.messages(history.chatContent || []);
+        await follow();
+      }
+
+      async function chooseConversation(): Promise<void> {
+        renderer.busy('Loading recent conversations');
+        const result = await client.listConversations(identifier, { limit: 20, omitContent: true });
+        const histories = result.histories.filter(h => h.assistantSpecializationIdentifier === identifier);
+        renderer.finish();
+        if (!histories.length) { note('No conversations for this assistant yet.'); return; }
+        const selected = await rl!.select(histories.map(h => ({
+          value: h.chatUID,
+          label: h.name || 'Untitled conversation',
+          description: `${h.chatUID === chatUid ? 'current · ' : ''}${h.chatUID} · ${new Date(h.creationTimestampMs).toLocaleString()}`,
+        })), chatUid, 'Recent conversations');
+        if (selected && !closed) await resumeConversation(selected);
+      }
+
       async function compact(): Promise<void> {
         if (options.agent) { note('/compact currently supports assistant conversations.'); return; }
         if (!chatUid) { note('Send a message before compacting this conversation.'); return; }
@@ -231,9 +266,11 @@ export function registerLiveCommand(program: Command): void {
           if (!input) continue;
           if (input === '/exit') break;
           try {
-            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /follow /stop /new /status /memories /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /conversations · /resume <chatUID> · /follow /stop /new /status /memories /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
             else if (input === '/assistants') await switchAssistant('');
             else if (input === '/assistant' || input.startsWith('/assistant ')) await switchAssistant(input.slice('/assistant'.length).trim());
+            else if (!options.agent && input === '/conversations') await chooseConversation();
+            else if (!options.agent && (input === '/resume' || input.startsWith('/resume '))) await resumeConversation(input.slice('/resume'.length).trim());
             else if (input === '/compact') await compact();
             else if (input === '/status') {
               note(`${options.agent ? 'Agent' : 'Assistant'}: ${displayName}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nState: ${state || 'idle'} · Transport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
