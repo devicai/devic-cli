@@ -1,3 +1,4 @@
+import { consumeChatStream } from './live/stream.js';
 import type {
   AssistantSpecialization,
   AsyncResponse,
@@ -84,7 +85,7 @@ export class DevicApiClient {
 
     const url = `${this.config.baseUrl}${endpoint}`;
     const headers: HeadersInit = {
-      'Content-Type': 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       Authorization: `Bearer ${this.config.apiKey}`,
       'devic-api-source': 'cli',
       ...options.headers,
@@ -140,6 +141,12 @@ export class DevicApiClient {
     return data as T;
   }
 
+  async uploadImage(image: { name: string; mime: string; data: Uint8Array }): Promise<{ name: string; downloadUrl: string }> {
+    const body = new FormData();
+    body.append('file', new Blob([new Uint8Array(image.data)], { type: image.mime }), image.name);
+    return this.request('/api/v1/files/upload', { method: 'POST', body });
+  }
+
   // ── Assistants ──
 
   async getAssistants(external = false, projectId?: string): Promise<AssistantSpecialization[]> {
@@ -183,18 +190,38 @@ export class DevicApiClient {
     });
   }
 
-  async getRealtimeHistory(assistantId: string, chatUid: string): Promise<RealtimeChatHistory> {
-    return this.request<RealtimeChatHistory>(`/api/v1/assistants/${assistantId}/chats/${chatUid}/realtime`);
+  async streamRealtimeHistory(assistantId: string, chatUid: string,
+    onSnapshot: (snapshot: RealtimeChatHistory) => void | Promise<void>, signal: AbortSignal): Promise<void> {
+    if (this.config.refreshToken && this.config.shouldRefreshProactively?.()) await this.refresh();
+    const url = `${this.config.baseUrl}/api/v1/assistants/${encodeURIComponent(assistantId)}/chats/${encodeURIComponent(chatUid)}/stream?partial=1`;
+    const open = () => fetch(url, { signal, headers: {
+      Authorization: `Bearer ${this.config.apiKey}`, Accept: 'text/event-stream', 'devic-api-source': 'cli',
+    } });
+    let response = await open();
+    if (response.status === 401 && this.config.refreshToken) {
+      await response.body?.cancel();
+      await this.refresh();
+      response = await open();
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Chat stream HTTP ${response.status}`);
+    }
+    await consumeChatStream(response, onSnapshot);
+  }
+
+  async getRealtimeHistory(assistantId: string, chatUid: string, signal?: AbortSignal): Promise<RealtimeChatHistory> {
+    return this.request<RealtimeChatHistory>(`/api/v1/assistants/${assistantId}/chats/${chatUid}/realtime`, { signal });
   }
 
   async getChatHistory(assistantId: string, chatUid: string): Promise<ChatHistory> {
-    return this.request<ChatHistory>(`/api/v1/assistants/${assistantId}/chats/${chatUid}`);
+    return this.request<ChatHistory>(`/api/v1/assistants/${encodeURIComponent(assistantId)}/chats/${encodeURIComponent(chatUid)}`);
   }
 
   async listConversations(
     assistantId: string,
     opts?: { offset?: number; limit?: number; omitContent?: boolean; tenantId?: string; subtenantId?: string },
-  ): Promise<unknown> {
+  ): Promise<{ histories: ChatHistory[]; total: number; offset: number; limit: number }> {
     const params = new URLSearchParams();
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     if (opts?.limit != null) params.set('limit', String(opts.limit));
@@ -222,6 +249,16 @@ export class DevicApiClient {
 
   async stopChat(assistantId: string, chatUid: string): Promise<{ chatUid: string; message: string }> {
     return this.request(`/api/v1/assistants/${assistantId}/chats/${chatUid}/stop`, { method: 'POST' });
+  }
+
+  async compactConversation(assistantId: string, chatUid: string): Promise<{
+    compacted: boolean;
+    reason?: string;
+    checkpoint?: { compactedMessageCount?: number; tokensBefore?: number; tokensAfter?: number };
+  }> {
+    return this.request(`/api/v1/assistants/${encodeURIComponent(assistantId)}/chats/${encodeURIComponent(chatUid)}/compact`, {
+      method: 'POST', body: '{}', signal: AbortSignal.timeout(120_000),
+    });
   }
 
   async sendToolResponses(assistantId: string, chatUid: string, responses: ToolCallResponse[]): Promise<AsyncResponse> {
@@ -302,9 +339,9 @@ export class DevicApiClient {
     return this.request(`/api/v1/agents/${agentId}/threads${q ? `?${q}` : ''}`);
   }
 
-  async getThread(threadId: string, withTasks = false): Promise<AgentThreadDto> {
+  async getThread(threadId: string, withTasks = false, signal?: AbortSignal): Promise<AgentThreadDto> {
     const q = withTasks ? '?withTasks=true' : '';
-    return this.request(`/api/v1/agents/threads/${threadId}${q}`);
+    return this.request(`/api/v1/agents/threads/${threadId}${q}`, { signal });
   }
 
   async updateThread(threadId: string, data: Record<string, unknown>): Promise<unknown> {

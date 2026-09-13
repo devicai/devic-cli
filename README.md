@@ -505,3 +505,164 @@ Credentials are stored in `~/.config/devic/config.json`. Environment variables t
 ## Requirements
 
 - Node.js 20+
+
+## Interactive cloud terminal (prototype)
+
+`live` is a terminal interface to cloud execution. It uses the CLI's existing
+login, `DEVIC_API_KEY`, and base URL configuration.
+
+```bash
+npm run build
+node bin/devic.js live <assistant-identifier>
+node bin/devic.js live <assistant-identifier> --chat-uid <chat-uid>
+node bin/devic.js live <assistant-identifier> -m "Hello"
+node bin/devic.js live <agent-id> --agent -m "Analyze this task"
+node bin/devic.js live <agent-id> --agent --thread <thread-id>
+```
+
+Assistant conversations use SSE snapshots, partial replies and text deltas, with
+polling fallback on stream failure. `--polling` forces polling. Agent threads use
+polling and display messages, tool names, task progress and execution state.
+A new prompt in agent mode creates a new thread; it does not append to the previous
+thread. Streaming support depends on the target backend version.
+
+Interactive commands: `/help`, `/follow`, `/new`, `/stop`, `/status`, `/exit`. Agent mode also
+supports `/approve`, `/reject`, `/pause`, `/resume`. Ctrl+C while following detaches
+locally; cloud execution continues. `/stop` requests a graceful assistant stop or
+an agent pause. Follow sessions are bounded to ten minutes; `/status` shows the session ID for
+reattachment. A single `-m` follows one turn and exits; without a TTY use `-m`,
+`--chat-uid` or `--thread`. Live output is human-readable (not the existing JSON
+script interface). The prototype accepts new prompts after the current follow
+finishes; it does not send steering messages during execution.
+
+### Local tools
+
+```bash
+node bin/devic.js live <assistant-identifier> --local-tools --workspace /path/to/project
+```
+
+This explicitly offers `read_file` and `list_files` via Model Interface Protocol
+(MIP). Every call requires `y` confirmation in a terminal. Paths must resolve
+inside the workspace, including symlinks; reads are capped at 64 KiB and directory
+listings at 500 entries. Approved tool results are sent to Devic. There is no shell
+or write tool in this prototype. MIP is assistant-only. Repeated tool call IDs are
+not executed again during the same process, and an ambiguous submission is never
+automatically retried. The process-local ledger is not a durable execution journal.
+
+### Prototype verification
+
+```bash
+npm test
+npm run test:tty # Python 3; POSIX PTY, Linux/macOS
+```
+
+Tests use a local mock API and temporary files: SSE chunk boundaries, UTF-8,
+partial/final deduplication, polling fallback without resending, agent approval
+states, local path boundaries, and a real terminal MIP round trip. These checks do
+not establish connectivity to a deployed Devic API.
+
+The live view keeps the conversation in scrollback: cyan user prompts, violet
+assistant labels, compact tool summaries and a transient activity spinner. System
+and developer context and raw tool payloads are hidden. IDs and transport details
+appear only through `/status`; a successful streaming-to-polling fallback is
+silent. Errors and approval requests remain visible. Redirected output is plain
+text without animation, and `NO_COLOR` disables colors in a terminal.
+
+Assistant replies use the assistant's display name (agent replies use the agent
+name). The terminal reconciles provisional streaming IDs with their persisted
+messages within the current reply, so final snapshots do not repeat streamed
+text. Identical replies in separate turns remain visible.
+
+Before sending, the CLI checks whether the assistant is archived. Failed cloud
+executions show available error details and explain that `/follow` only observes
+state; it does not retry a failed execution or unarchive an assistant.
+
+### Switch assistant and compact context
+
+- `/assistants` lists active assistants by display name. Use ↑/↓ and Enter to
+  switch, Escape to cancel, or type to filter. `/assistant` is an alias.
+- `/assistant <identifier>` switches directly. The next prompt starts a fresh
+  conversation with that assistant; the previous cloud conversation is preserved.
+  A missing or archived target leaves the current session unchanged. Selecting
+  the current assistant keeps the current conversation.
+- `/compact` requests server-side compaction of the current assistant conversation.
+  It keeps the visible transcript and recent context, and reports whether older
+  messages were summarized or there was nothing worth compacting. It is not
+  available for agent threads in this version.
+
+`/compact` requires `POST /api/v1/assistants/:identifier/chats/:chatUid/compact`
+in the target backend. Older deployments show an availability message. The server
+refuses busy conversations and verifies conversation ownership. Compaction may
+make a billed model call. The CLI does not change automatic-compaction settings.
+
+### Prompt menus
+
+Typing `/` opens command suggestions below the prompt, filtered as you type.
+Use ↑/↓ to select, Enter to run, Tab to complete without running, and Escape to
+hide the menu while keeping your input. Assistant-only commands are hidden in
+agent mode. Outside a menu, ↑/↓ browses submitted prompt history; left/right,
+Home/End, Backspace/Delete and Ctrl+U/Ctrl+K edit the current input. Long input
+scrolls horizontally, and menus adapt to terminal width/height and resize events.
+No additional runtime dependencies are required.
+
+`/status` fetches persisted conversation usage: model/provider, reported total
+input/output/cache/reasoning and auxiliary tokens, and recorded USD cost including
+auxiliary calls. It also shows model context capacity, the last recorded input
+usage and compaction statistics. Cumulative tokens and the last recorded input
+(which can include retries) are **not** the current context size. Missing metrics
+remain unavailable; totals sum the counters the API reports. Context capacity
+requires the backend's optional `contextWindow` history field and a known model.
+
+Recalled memories appear as a compact activity line, deduplicated across streaming
+updates. `/memories` shows facts, graph entities and previous-session turns, with
+source and query. It refreshes persisted recalls and falls back to those already
+received if the refresh fails. Switching assistants or `/new` clears that view.
+
+Resume an assistant conversation from the terminal with `/resume <chatUID>`.
+`/conversations` lists the selected assistant's 20 most recently created chats:
+use ↑/↓ and Enter to resume, type to filter by title/UID, or Escape to cancel.
+The CLI checks the conversation's assistant before replacing the session, restores
+its history and follows the current execution. Subsequent messages use that chat
+UID. A failed selection leaves the previous session intact. In agent mode,
+`/resume` continues to resume the current paused agent thread.
+
+To reattach when starting the CLI, the existing option is:
+
+```bash
+node devic-ai/devic-cli/bin/devic.js live <assistant-identifier> --chat-uid <chatUID>
+```
+
+In interactive terminals, user and assistant messages render Markdown: headings,
+strong/emphasized/deleted text, links, inline/fenced code, lists, checkboxes and
+quotes. Tables become vertical column/value records to fit narrow windows. Code
+uses a distinct color and preserves literal Markdown characters. Links show their
+URLs without opening them; images are represented by their label and URL.
+
+During streaming, completed blocks enter scrollback while the unfinished block
+has a live preview of up to six lines. The complete block replaces its preview
+when it finishes; older conversation output is not redrawn. `NO_COLOR` disables
+styling but retains layout. Redirected output retains the original Markdown, and
+input sent to the API remains unchanged.
+
+Large pastes (over 1,000 Unicode characters) appear as `[Pasted X characters]`;
+multiline/tabbed pastes also collapse so the input stays on one line. The original
+text, including whitespace, is sent on Enter. A paste never runs a slash command
+or submits itself. Arrows and Backspace treat each folded block as one item, and
+prompt history retains its backing text.
+
+In assistant mode, paste a PNG/JPEG/WebP/GIF file path to attach it as `[Image#1]`,
+`[Image#2]`, etc. Ctrl+V reads an image or text from the system clipboard (macOS;
+Linux requires wl-paste on Wayland or xclip on X11). Your terminal's usual paste
+shortcut works for text through bracketed-paste mode. Direct image clipboard
+paste uses Ctrl+V. Images upload only on Enter via the existing Files API (25 MB
+per image); deleting the marker before sending removes the attachment. Native
+clipboard image access is not implemented on Windows; file-path paste works.
+
+`/status` groups context, accumulated token usage, USD cost and compaction into
+separate sections, with colored state/total indicators and percentage bars. The
+context bar compares the **last recorded input** to model capacity; it does not
+measure current context occupancy. Token bars show shares of the reported total:
+input includes cache writes, output includes reasoning/cached output, and cache
+reads and auxiliary calls are separate. Missing/zero denominators remain
+unavailable; values above capacity keep their actual percentage while the bar is
+visually capped. Layout wraps to terminal width and respects NO_COLOR.
