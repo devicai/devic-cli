@@ -1,9 +1,9 @@
+import type { Submission } from '../live/paste.js';
 import { Command } from 'commander';
 import { LiveInput, commandOptions } from '../live/input.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from '../helpers.js';
-import { DevicApiError } from '../errors.js';
-import { ConversationFailure, explainFailure, requireActiveAssistant } from '../live/failures.js';
+import { ConversationFailure, compactionNotFound, explainFailure, requireActiveAssistant } from '../live/failures.js';
 import { LiveRenderer, safe } from '../live/render.js';
 import { usageStatus } from '../live/status.js';
 import { localTools, runLocalTool } from '../live/local-tools.js';
@@ -46,7 +46,7 @@ export function registerLiveCommand(program: Command): void {
         if (active) { active.abort(); note('Detached. Cloud execution continues. Use /follow or /stop.'); }
         else { closed = true; rl?.close(); }
       };
-      if (rl) { rl.on('SIGINT', detach); rl.on('close', () => { closed = true; active?.abort(); }); }
+      if (rl) { rl.on('pasteError', error => note(`Paste failed: ${error instanceof Error ? error.message : String(error)}`)); rl.on('SIGINT', detach); rl.on('close', () => { closed = true; active?.abort(); }); }
       else process.on('SIGINT', detach);
 
       async function follow(): Promise<void> {
@@ -206,8 +206,9 @@ export function registerLiveCommand(program: Command): void {
         let result: Awaited<ReturnType<typeof client.compactConversation>>;
         try { result = await client.compactConversation(identifier, chatUid); }
         catch (error) {
-          if (error instanceof DevicApiError && error.statusCode === 404) {
-            note('Compaction is unavailable for this conversation on this API. The public compaction endpoint requires an updated backend.');
+          const explanation = compactionNotFound(error);
+          if (explanation) {
+            note(explanation);
             return;
           }
           throw error;
@@ -229,9 +230,10 @@ export function registerLiveCommand(program: Command): void {
         }
       }
 
-      async function send(message: string, alreadyVisible = false): Promise<void> {
+      async function send(message: string, alreadyVisible = false, submission?: Submission): Promise<void> {
+        if (options.agent && submission?.images.length) throw new Error('Image attachments currently require assistant mode.');
         if (options.agent) renderer.reset();
-        renderer.user(message, alreadyVisible);
+        renderer.user(message, alreadyVisible, submission?.display);
         renderer.busy('Sending');
         if (options.agent) {
           const result = await client.createThread(identifier, { message }) as { threadId?: string; _id?: string };
@@ -243,7 +245,15 @@ export function registerLiveCommand(program: Command): void {
           const assistant = await client.getAssistant(identifier);
           requireActiveAssistant(assistant);
           renderer.setAssistantName(assistant.name); displayName = assistant.name;
+          const files = [];
+          for (const image of submission?.images || []) {
+            renderer.busy('Uploading image');
+            const uploaded = await client.uploadImage(image);
+            if (!uploaded.downloadUrl) throw new Error('Image upload did not return a download URL');
+            files.push({name:uploaded.name || image.name, donwloadUrl:uploaded.downloadUrl, fileType:'image' as const});
+          }
           const result = await client.sendMessageAsync(identifier, { message, chatUid,
+            ...(files.length ? {files} : {}),
             ...(options.localTools ? { tools: localTools } : {}),
           });
           chatUid = result.chatUid;
@@ -263,10 +273,12 @@ export function registerLiveCommand(program: Command): void {
 
         while (!closed) {
           const input = await question(renderer.prompt(), true);
-          if (!input) continue;
-          if (input === '/exit') break;
+          const submission = rl.takeSubmission();
+          if (!input && !submission?.images.length) continue;
+          if (!submission && input === '/exit') break;
           try {
-            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /conversations · /resume <chatUID> · /follow /stop /new /status /memories /exit · agents: /approve /reject /pause /resume\nCtrl+C detaches; cloud execution continues. New agent prompts start new threads.');
+            if (submission) { await send(submission.message, false, submission); continue; }
+            if (input === '/help') note('/assistants · /assistant [identifier] · /compact · /conversations · /resume <chatUID> · /follow /stop /new /status /memories /exit · agents: /approve /reject /pause /resume\nCtrl+V pastes clipboard text/images; large pastes stay folded until sent. Ctrl+C detaches; cloud execution continues. New agent prompts start new threads.');
             else if (input === '/assistants') await switchAssistant('');
             else if (input === '/assistant' || input.startsWith('/assistant ')) await switchAssistant(input.slice('/assistant'.length).trim());
             else if (!options.agent && input === '/conversations') await chooseConversation();

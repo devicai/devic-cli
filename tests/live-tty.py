@@ -13,11 +13,20 @@ from pathlib import Path
 submitted = []
 messages = []
 compacted = []
+uploaded = []
 class API(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
     def do_POST(self):
-        data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        raw = self.rfile.read(int(self.headers['Content-Length']))
+        if self.path == '/api/v1/files/upload':
+            uploaded.append((self.headers['Content-Type'], raw))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"data":{"name":"tiny.png","downloadUrl":"https://example.com/tiny.png","fileType":"image"}}')
+            return
+        data = json.loads(raw)
         if self.path.endswith('/compact'):
             compacted.append(self.path)
             self.send_response(200)
@@ -86,6 +95,7 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), API)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
     Path(root, 'fixture.txt').write_text('fixture only')
+    Path(root, 'tiny.png').write_bytes(bytes([137,80,78,71,13,10,26,10]))
     master, slave = pty.openpty()
     proc = subprocess.Popen(['node', 'bin/devic.js', 'live', 'fixture', '--local-tools', '--workspace', root],
         cwd=Path(__file__).resolve().parent.parent, stdin=slave, stdout=slave, stderr=slave,
@@ -189,6 +199,33 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         until('• Rendered item')
         until('you ›')
         assert messages[-1][1]['message'] == '**Markdown user**'
+        before = len(messages)
+        paste = '/exit\n' + '🌞'.ljust(1200, 'x') + '\n  final\t'
+        os.write(master, b'\x1b[200~' + paste.encode() + b'\x1b[201~')
+        until(f'[Pasted {len(paste)} characters]')
+        assert len(messages) == before
+        os.write(master, b'\n')
+        until('LOCAL_TOOL_OK')
+        until('you ›')
+        assert messages[-1][1]['message'] == paste
+        # Editing a chip removes its whole backing paste, not just its label.
+        os.write(master, b'\x1b[200~' + b'x' * 1201 + b'\x1b[201~')
+        until('[Pasted 1201 characters]')
+        os.write(master, b'\x7fcontinue after deletion\n')
+        until('TURN_DONE continue after deletion')
+        until('you ›')
+        assert messages[-1][1]['message'] == 'continue after deletion'
+        os.write(master, b'\x1b[200~' + str(Path(root, 'tiny.png')).encode() + b'\x1b[201~')
+        until('[Image#1]')
+        assert not uploaded
+        os.write(master, b' describe\n')
+        until('LOCAL_TOOL_OK')
+        until('you ›')
+        assert messages[-1][1]['files'] == [{'name':'tiny.png','donwloadUrl':'https://example.com/tiny.png','fileType':'image'}]
+        assert messages[-1][1]['message'] == '[Image#1] describe'
+        assert uploaded[0][0].startswith('multipart/form-data; boundary=')
+        assert b'filename="tiny.png"' in uploaded[0][1]
+        assert bytes([137,80,78,71,13,10,26,10]) in uploaded[0][1]
         os.write(master, b'/exit\n')
         until('/exit')
         # Keep consuming the PTY while waiting: terminal writes may block the
@@ -209,7 +246,7 @@ with tempfile.TemporaryDirectory(prefix='devic-live-tty-') as root:
         assert 'Thinking' in transcript or 'Sending' in transcript
         assert len(submitted) == 1
         assert submitted[0]['content']['text'] == 'fixture only'
-        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories, conversation resume, Markdown and /exit')
+        print('PASS: slash menu, Tab completion, Escape, arrow assistant picker, MIP, context isolation, compaction, status, memories, conversation resume, Markdown, paste chips, image uploads and /exit')
     finally:
         if proc.poll() is None:
             proc.kill()

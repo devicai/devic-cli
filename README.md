@@ -530,3 +530,17 @@ has a live preview of up to six lines. The complete block replaces its preview
 when it finishes; older conversation output is not redrawn. `NO_COLOR` disables
 styling but retains layout. Redirected output retains the original Markdown, and
 input sent to the API remains unchanged.
+
+Large pastes (over 1,000 Unicode characters) appear as `[Pasted X characters]`;
+multiline/tabbed pastes also collapse so the input stays on one line. The original
+text, including whitespace, is sent on Enter. A paste never runs a slash command
+or submits itself. Arrows and Backspace treat each folded block as one item, and
+prompt history retains its backing text.
+
+In assistant mode, paste a PNG/JPEG/WebP/GIF file path to attach it as `[Image#1]`,
+`[Image#2]`, etc. Ctrl+V reads an image or text from the system clipboard (macOS;
+Linux requires wl-paste on Wayland or xclip on X11). Your terminal's usual paste
+shortcut works for text through bracketed-paste mode. Direct image clipboard
+paste uses Ctrl+V. Images upload only on Enter via the existing Files API (25 MB
+per image); deleting the marker before sending removes the attachment. Native
+clipboard image access is not implemented on Windows; file-path paste works.

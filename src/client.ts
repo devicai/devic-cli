@@ -84,7 +84,7 @@ export class DevicApiClient {
 
     const url = `${this.config.baseUrl}${endpoint}`;
     const headers: HeadersInit = {
-      'Content-Type': 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       Authorization: `Bearer ${this.config.apiKey}`,
       'devic-api-source': 'cli',
       ...options.headers,
@@ -136,6 +136,12 @@ export class DevicApiClient {
       return data.data as T;
     }
     return data as T;
+  }
+
+  async uploadImage(image: { name: string; mime: string; data: Uint8Array }): Promise<{ name: string; downloadUrl: string }> {
+    const body = new FormData();
+    body.append('file', new Blob([new Uint8Array(image.data)], { type: image.mime }), image.name);
+    return this.request('/api/v1/files/upload', { method: 'POST', body });
   }
 
   // ── Assistants ──

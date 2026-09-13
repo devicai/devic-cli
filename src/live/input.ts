@@ -1,3 +1,4 @@
+import { PasteStore, imageAtPath, readClipboard, type Submission } from './paste.js';
 import { EventEmitter } from 'node:events';
 import { emitKeypressEvents, type Key } from 'node:readline';
 import { safe } from './render.js';
@@ -31,13 +32,49 @@ function clip(text: string, cells: number): string {
 export class LiveInput extends EventEmitter {
   private pending?: { resolve: (value: string) => void; prefix: string; options: MenuOption[]; picker: boolean };
   private text: string[] = [];
+  private readonly pastes = new PasteStore();
+  private pasteBuffer?: string;
+  private hadPaste = false;
+  private loadingPaste = false;
+  private submitted?: Submission;
+  takeSubmission(): Submission | undefined { const value = this.submitted; this.submitted = undefined; return value; }
+  private labels(parts = this.text): string { return parts.map(p => this.pastes.label(p)).join(''); }
+  private async insertPaste(value: string): Promise<void> {
+    if (!this.pending) return;
+    if (!this.pending.options.length || this.pending.picker) {
+      const chars = Array.from(safe(value).replace(/[\r\n\t]/g,' '));
+      this.text.splice(this.cursor,0,...chars); this.cursor += chars.length; this.draw(); return;
+    }
+    this.loadingPaste = true;
+    try {
+      const image = await imageAtPath(value);
+      if (!this.pending || this.closed) return;
+      const parts = image ? [this.pastes.image(image)] : this.pastes.text(value);
+      this.text.splice(this.cursor,0,...parts); this.cursor += parts.length;
+      this.hadPaste = true; this.dismissed = true;
+    } catch(error) { this.emit('pasteError',error); }
+    finally { this.loadingPaste = false; this.draw(); }
+  }
+  private async clipboardPaste(): Promise<void> {
+    if (!this.pending?.options.length || this.pending.picker) return;
+    this.loadingPaste = true;
+    try {
+      const value = await readClipboard();
+      if (!this.pending || this.closed) return;
+      if(value.image) {
+        const part=this.pastes.image(value.image); this.text.splice(this.cursor++,0,part);
+        this.hadPaste=true; this.dismissed=true;
+      } else if(value.text) await this.insertPaste(value.text);
+    } catch { this.emit('pasteError',new Error('Could not read the clipboard. Paste an image file path instead (Linux requires wl-paste or xclip).')); }
+    finally { this.loadingPaste=false; this.draw(); }
+  }
   private cursor = 0;
   private selected = 0;
   private dismissed = false;
   private painted = false;
-  private history: string[] = [];
+  private history: Array<{parts:string[]; pasted:boolean}> = [];
   private historyIndex = 0;
-  private draft = '';
+  private draft: {parts:string[]; pasted:boolean} = {parts:[],pasted:false};
   private closed = false;
   private readonly raw = !!process.stdin.isRaw;
   private readonly color = process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb';
@@ -45,6 +82,7 @@ export class LiveInput extends EventEmitter {
     super();
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
+    process.stdout.write('\x1b[?2004h');
     process.stdin.on('keypress', this.onKey);
     process.stdout.on('resize', this.draw);
     process.stdin.on('end', this.close);
@@ -64,16 +102,17 @@ export class LiveInput extends EventEmitter {
     if (width(prefix) > Math.max(20, (process.stdout.columns || 80) / 2)) {
       process.stdout.write(`${prefix}\n`); prefix = '› ';
     }
-    this.text = []; this.cursor = 0; this.dismissed = false;
+    this.text = []; this.cursor = 0; this.dismissed = false; this.hadPaste = false;
     this.selected = Math.max(0, options.findIndex(o => o.value === current));
-    this.historyIndex = this.history.length; this.draft = '';
+    this.historyIndex = this.history.length; this.draft = {parts:[],pasted:false};
     return new Promise(resolve => {
       this.pending = { resolve, prefix, options, picker }; this.draw();
     });
   }
   private matches(): MenuOption[] {
     if (!this.pending || this.dismissed) return [];
-    const line = this.text.join('');
+    const line = this.labels();
+    if (this.hadPaste && !this.pending.picker) return [];
     if (this.pending.picker) return this.pending.options.filter(o =>
       `${o.label} ${o.description || ''}`.toLowerCase().includes(line.toLowerCase()));
     if (!/^\/\S*$/.test(line)) return [];
@@ -92,10 +131,10 @@ export class LiveInput extends EventEmitter {
     const available = Math.max(3, cols - width(prefix) - 1);
     let start = this.cursor;
     let before = 0;
-    while (start > 0 && before + cellWidth(this.text[start - 1]) < available - 1) {
-      before += cellWidth(this.text[--start]);
+    while (start > 0 && before + width(this.pastes.label(this.text[start - 1])) < available - 1) {
+      before += width(this.pastes.label(this.text[--start]));
     }
-    const visible = clip(this.text.slice(start).join(''), available);
+    const visible = clip(this.labels(this.text.slice(start)), available);
     process.stdout.write(prefix + visible);
     const matches = this.matches();
     this.selected = Math.min(this.selected, Math.max(0, matches.length - 1));
@@ -125,6 +164,15 @@ export class LiveInput extends EventEmitter {
     pending.resolve(value);
   }
   private onKey = (text: string | undefined, key: Key): void => {
+    if (key.name === 'paste-start') { this.pasteBuffer = ''; return; }
+    if (key.name === 'paste-end') {
+      const value = this.pasteBuffer; this.pasteBuffer = undefined;
+      if (value !== undefined) void this.insertPaste(value);
+      return;
+    }
+    if (this.pasteBuffer !== undefined) { this.pasteBuffer += text ?? key.sequence ?? ''; return; }
+    if (key.ctrl && key.name === 'v') { if (!this.loadingPaste) void this.clipboardPaste(); return; }
+    if (this.loadingPaste && !(key.ctrl && key.name === 'c')) return;
     if (key.ctrl && key.name === 'c') {
       if (this.pending?.picker) { this.finish('', false); return; }
       this.emit('SIGINT'); return;
@@ -146,9 +194,10 @@ export class LiveInput extends EventEmitter {
       }
     } else if (key.name === 'return' || key.name === 'enter') {
       if (this.pending.picker) { if (matches.length) this.finish(matches[this.selected].value, false); return; }
-      const value = matches.length ? matches[this.selected].value : this.text.join('');
-      if (value.trim() && this.pending.options.length) this.history.push(value);
-      this.finish(value, !this.pending.options.length || value.trim().startsWith('/')); return;
+      const value = matches.length ? matches[this.selected].value : this.labels();
+      if (value.trim() && this.pending.options.length) this.history.push({parts:[...this.text],pasted:this.hadPaste});
+      if (this.pending.options.length && this.hadPaste) this.submitted = this.pastes.expand(this.text);
+      this.finish(value, !this.pending.options.length || (!this.hadPaste && value.trim().startsWith('/'))); return;
     } else if (key.name === 'left' || (key.ctrl && key.name === 'b')) this.cursor = Math.max(0, this.cursor - 1);
     else if (key.name === 'right' || (key.ctrl && key.name === 'f')) this.cursor = Math.min(this.text.length, this.cursor + 1);
     else if (key.name === 'home' || (key.ctrl && key.name === 'a')) this.cursor = 0;
@@ -158,9 +207,10 @@ export class LiveInput extends EventEmitter {
     else if (key.ctrl && key.name === 'u') { this.text.splice(0, this.cursor); this.cursor = 0; this.dismissed = false; }
     else if (key.ctrl && key.name === 'k') this.text.splice(this.cursor);
     else if (!this.pending.picker && (key.name === 'up' || key.name === 'down')) {
-      if (this.historyIndex === this.history.length) this.draft = this.text.join('');
+      if (this.historyIndex === this.history.length) this.draft = {parts:[...this.text],pasted:this.hadPaste};
       this.historyIndex = Math.min(this.history.length, Math.max(0, this.historyIndex + (key.name === 'up' ? -1 : 1)));
-      this.text = Array.from(this.historyIndex === this.history.length ? this.draft : this.history[this.historyIndex]);
+      const entry = this.historyIndex === this.history.length ? this.draft : this.history[this.historyIndex];
+      this.text = [...entry.parts]; this.hadPaste = entry.pasted;
       this.cursor = this.text.length;
     } else if (text && !key.ctrl && !key.meta) {
       const chars = Array.from(safe(text).replace(/[\r\n\t]/g, ' '));
@@ -175,6 +225,7 @@ export class LiveInput extends EventEmitter {
     process.stdin.removeListener('keypress', this.onKey);
     process.stdin.removeListener('end', this.close);
     process.stdout.removeListener('resize', this.draw);
+    process.stdout.write('\x1b[?2004l'); this.pastes.clear();
     process.stdin.setRawMode(this.raw); process.stdin.pause(); this.emit('close');
   };
 }

@@ -36,10 +36,10 @@ export class LiveRenderer {
   setAssistantName(name: string): void { this.assistantName = safe(name).replace(/\s+/g, ' ').trim() || 'Assistant'; }
   banner(): void { this.write(`\n  ${this.ink('36;1', '◆ devic')}  ${this.ink('2', '/help for commands')}\n`); }
   prompt(): string { this.finish(); return `\n${this.ink('36;1', 'you ›')} `; }
-  user(text: string, alreadyVisible = false): void {
+  user(text: string, alreadyVisible = false, display = text): void {
     this.finish();
     this.echoed = safe(text);
-    if (!alreadyVisible) this.write(`\n${this.ink('36;1', 'you ›')} ${this.tty ? renderMarkdown(safe(text), this.color, this.options.columns?.() || process.stdout.columns || 80) : safe(text)}\n`);
+    if (!alreadyVisible) this.write(`\n${this.ink('36;1', 'you ›')} ${this.tty ? renderMarkdown(safe(display), this.color, this.options.columns?.() || process.stdout.columns || 80) : safe(display)}\n`);
   }
   note(text: string): void {
     this.finish(); this.write(`\n  ${this.ink('2', safe(text))}\n`);
