@@ -5,7 +5,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from '../helpers.js';
 import { ConversationFailure, compactionNotFound, explainFailure, requireActiveAssistant } from '../live/failures.js';
 import { LiveRenderer, safe } from '../live/render.js';
-import { usageStatus } from '../live/status.js';
 import { localTools, runLocalTool } from '../live/local-tools.js';
 import type { RealtimeChatHistory, ToolCallResponse } from '../types.js';
 
@@ -285,16 +284,17 @@ export function registerLiveCommand(program: Command): void {
             else if (!options.agent && (input === '/resume' || input.startsWith('/resume '))) await resumeConversation(input.slice('/resume'.length).trim());
             else if (input === '/compact') await compact();
             else if (input === '/status') {
-              note(`${options.agent ? 'Agent' : 'Assistant'}: ${displayName}\n${options.agent ? 'Thread' : 'Chat'}: ${threadId || chatUid || 'not started'}\nState: ${state || 'idle'} · Transport: ${options.agent || !useStream ? 'polling' : 'streaming'}`);
+              renderer.session({name: displayName, kind: options.agent ? 'Agent' : 'Assistant',
+                id: threadId || chatUid, state, transport: options.agent || !useStream ? 'polling' : 'streaming'});
               if (options.agent && threadId) {
                 renderer.busy('Loading usage');
                 const thread = await client.getThread(threadId, true);
-                note(usageStatus({ tokenUsage: thread.tokenUsage }, thread.threadContent));
+                renderer.usage({ tokenUsage: thread.tokenUsage }, thread.threadContent);
               } else if (chatUid) {
                 renderer.busy('Loading usage');
                 const history = await client.getChatHistory(identifier, chatUid);
                 renderer.recalled(history.recalledMemories || [], false);
-                note(usageStatus(history));
+                renderer.usage(history);
               } else note('Send a message to see conversation usage and context.');
             }
             else if (input === '/memories') {

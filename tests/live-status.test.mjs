@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageStatus } from '../dist/live/status.js';
+import { usageStatus, usageBar } from '../dist/live/status.js';
 import { LiveRenderer } from '../dist/live/render.js';
 
 test('status sums disjoint cache/reasoning/auxiliary counters and costs once', () => {
@@ -64,4 +64,17 @@ test('memory details sanitize terminal escapes, empty records stay hidden and up
   renderer.showMemories();
   assert.match(output, /New fact/); assert.match(output, /Query: search/);
   assert.doesNotMatch(output, /\x1b/);
+});
+
+
+test('status bars retain honest percentages, handle unknown/zero capacity and fit narrow terminals', () => {
+  assert.match(usageBar(36217,1050000), /3\.4%$/);
+  assert.match(usageBar(558883,797034), /70\.1%$/);
+  assert.match(usageBar(200,100,8), /^━━━━━━━━ 200\.0%$/);
+  assert.match(usageBar(0,100,8), /^┄┄┄┄┄┄┄┄ 0\.0%$/);
+  assert.equal(usageBar(10,0), '— unavailable');
+  assert.equal(usageBar(undefined,100), '— unavailable');
+  const output = usageStatus({ llm: '\x1b[2JModel', tokenUsage: { inputTokens: 10, outputTokens: 5 } }, [], {columns:32});
+  assert.doesNotMatch(output, /\x1b/);
+  assert.ok(output.split('\n').every(line => line.length <= 32));
 });

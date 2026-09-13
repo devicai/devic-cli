@@ -544,3 +544,12 @@ shortcut works for text through bracketed-paste mode. Direct image clipboard
 paste uses Ctrl+V. Images upload only on Enter via the existing Files API (25 MB
 per image); deleting the marker before sending removes the attachment. Native
 clipboard image access is not implemented on Windows; file-path paste works.
+
+`/status` groups context, accumulated token usage, USD cost and compaction into
+separate sections, with colored state/total indicators and percentage bars. The
+context bar compares the **last recorded input** to model capacity; it does not
+measure current context occupancy. Token bars show shares of the reported total:
+input includes cache writes, output includes reasoning/cached output, and cache
+reads and auxiliary calls are separate. Missing/zero denominators remain
+unavailable; values above capacity keep their actual percentage while the bar is
+visually capped. Layout wraps to terminal width and respects NO_COLOR.

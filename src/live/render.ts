@@ -1,3 +1,6 @@
+import wrapAnsi from 'wrap-ansi';
+import { usageStatus } from './status.js';
+import type { ChatHistory } from '../types.js';
 import { MarkdownStream, renderMarkdown } from './markdown.js';
 import { stripVTControlCharacters } from 'node:util';
 import type { ChatMessage, RealtimeChatHistory, RecalledMemoryRecord } from '../types.js';
@@ -43,6 +46,21 @@ export class LiveRenderer {
   }
   note(text: string): void {
     this.finish(); this.write(`\n  ${this.ink('2', safe(text))}\n`);
+  }
+  session(info: { name: string; kind: string; id?: string; state: string; transport: string }): void {
+    this.finish();
+    const width = Math.max(20, (this.options.columns?.() || process.stdout.columns || 80) - 2);
+    const color = info.state === 'completed' ? '32' : ['error', 'limit_exceeded', 'failed'].includes(info.state) ? '31' : '36';
+    const title = `${this.ink('35;1', '◆ ' + safe(info.name).replace(/\s+/g, ' '))} ${this.ink('2', '· ' + safe(info.kind))}`;
+    this.write('\n' + wrapAnsi(title, width, {hard:true}) + '\n' +
+      wrapAnsi(`  ${info.kind === 'Agent' ? 'Thread' : 'Chat'}: ${safe(info.id || 'not started')}`, width, {hard:true}) + '\n' +
+      wrapAnsi(`  ${this.ink(color, '● ' + safe(info.state || 'idle'))}  ${this.ink('2', '· ' + safe(info.transport))}`, width, {hard:true}) + '\n');
+  }
+  usage(history: Partial<ChatHistory>, messages?: ChatMessage[]): void {
+    this.finish();
+    this.write('\n' + usageStatus(history, messages, {
+      color: this.color, columns: Math.max(20, (this.options.columns?.() || process.stdout.columns || 80) - 2),
+    }) + '\n');
   }
   busy(label = 'Thinking'): void {
     this.label = safe(label);
