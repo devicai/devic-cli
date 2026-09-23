@@ -143,6 +143,10 @@ const AGENT_SCHEMA: Schema = {
       suggestion:
         'For agents this lives nested: `{ "assistantSpecialization": { "subagentsIds": [...] } }`.',
     },
+    codeSnippetIds: {
+      suggestion:
+        'For agents this lives nested: `{ "assistantSpecialization": { "codeSnippetIds": [...] } }`. Ids come from `devic snippets list`.',
+    },
     knowledgeSkills: {
       suggestion:
         'For agents this lives nested: `{ "assistantSpecialization": { "knowledgeSkills": [{ id, type }] } }`.',

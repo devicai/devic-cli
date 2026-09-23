@@ -228,6 +228,37 @@ answers whether an agent will get that result — and there is no sandbox behind
 it. Validate a connection with read-only tools (`*_GET_*`, `*_LIST_*`,
 `*_FETCH_*`); `GMAIL_SEND_EMAIL` really sends the email.
 
+### Code snippets
+
+Functions you write once and give to agents and assistants as tools. Each one
+defines `main(input)`; `parameters` is the JSON Schema of `input`, and the
+model calls it by its `toolName`.
+
+```bash
+devic snippets list --language python
+devic snippets get <snippetId>
+devic snippets get <snippetId> --code-only > distance.py
+
+# Create from a source file (language inferred from the extension)
+devic snippets create --name calculate_distance \
+    --description "Distance in meters between two coordinates" \
+    --code-file distance.py --parameters params.json
+
+# Only the fields given change; a code or contract change saves a new version
+devic snippets update <snippetId> --code-file distance.py --expected-version 3
+devic snippets update <snippetId> --disabled
+
+# Run it in a sandbox: given inputs, or its saved test cases. Exits 1 if a run fails.
+devic snippets test <snippetId> --input '{"lat": 40.4, "lng": -3.7}'
+devic snippets test <snippetId>
+
+devic snippets delete <snippetId>
+```
+
+Attach one by adding its id to `codeSnippetIds` (an assistant's top level, an
+agent's `assistantSpecialization`). If the entity has an `enabledTools` list,
+put the snippet's `toolName` in it too, or runs leave the snippet out.
+
 ### Feedback
 
 ```bash

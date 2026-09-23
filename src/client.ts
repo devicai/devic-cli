@@ -43,6 +43,25 @@ export interface DevicApiClientConfig {
   shouldRefreshProactively?: () => boolean;
 }
 
+/**
+ * "Request validation failed" says nothing about what to fix; the public API
+ * sends the failing fields in `details.validationErrors`, so they go in the
+ * message.
+ */
+function withValidationDetails(message: string, errors: unknown): string {
+  if (!Array.isArray(errors) || !errors.length) return message;
+  const lines: string[] = [];
+  const walk = (list: any[], path: string) => {
+    for (const e of list) {
+      const at = path ? `${path}.${e?.property}` : String(e?.property);
+      for (const text of Object.values(e?.constraints ?? {})) lines.push(String(text));
+      if (Array.isArray(e?.children) && e.children.length) walk(e.children, at);
+    }
+  };
+  walk(errors, '');
+  return lines.length ? `${message}: ${lines.join('; ')}` : message;
+}
+
 export class DevicApiClient {
   private config: DevicApiClientConfig;
   private refreshing?: Promise<string>;
@@ -111,7 +130,10 @@ export class DevicApiClient {
         } else {
           errorData = {
             statusCode: typeof body?.statusCode === 'number' ? body.statusCode : response.status,
-            message: body?.message ?? response.statusText,
+            message: withValidationDetails(
+              body?.message ?? response.statusText,
+              body?.details?.validationErrors,
+            ),
             error: typeof body?.error === 'string' ? body.error : undefined,
             // Preserve structured error details the backend may attach (e.g.
             // INVALID_SUBAGENTS) so the CLI can render an actionable hint.
@@ -1148,5 +1170,61 @@ export class DevicApiClient {
     if (opts?.offset != null) params.set('offset', String(opts.offset));
     const q = params.toString();
     return this.request(`/api/v1/triggers/${id}/events${q ? `?${q}` : ''}`);
+  }
+
+  // ── Code snippets ──
+
+  async listCodeSnippets(opts?: {
+    search?: string;
+    language?: string;
+    enabled?: 'true' | 'false' | 'all';
+    tag?: string;
+    projectId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(opts ?? {})) {
+      if (value != null && value !== '') params.set(key, String(value));
+    }
+    const q = params.toString();
+    return this.request(`/api/v1/code-snippets${q ? `?${q}` : ''}`);
+  }
+
+  async getCodeSnippet(id: string): Promise<unknown> {
+    return this.request(`/api/v1/code-snippets/${encodeURIComponent(id)}`);
+  }
+
+  async createCodeSnippet(body: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/api/v1/code-snippets`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateCodeSnippet(
+    id: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/api/v1/code-snippets/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteCodeSnippet(id: string): Promise<unknown> {
+    return this.request(`/api/v1/code-snippets/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async testCodeSnippet(
+    id: string,
+    body: { inputs?: Record<string, unknown>[]; timeout?: number },
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/code-snippets/${encodeURIComponent(id)}/test`,
+      { method: 'POST', body: JSON.stringify(body) },
+    );
   }
 }
