@@ -20,6 +20,7 @@ import { registerDocumentCommands } from './commands/documents.js';
 import { registerSkillCommands } from './commands/skills.js';
 import { registerEnvironmentCommands } from './commands/environments.js';
 import { registerSandboxCommands } from './commands/sandbox.js';
+import { registerCodeSnippetCommands } from './commands/code-snippets.js';
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
@@ -55,6 +56,7 @@ registerDocumentCommands(program);
 registerSkillCommands(program);
 registerEnvironmentCommands(program);
 registerSandboxCommands(program);
+registerCodeSnippetCommands(program);
 
 // Global error handler
 program.exitOverride();
