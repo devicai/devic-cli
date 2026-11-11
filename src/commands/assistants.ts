@@ -279,6 +279,7 @@ export function registerAssistantCommands(program: Command): void {
     .description('Send a message to an assistant')
     .option('-m, --message <text>', 'Message to send (required unless --from-json carries it)')
     .option('--chat-uid <uid>', 'Continue an existing conversation')
+    .option('--chat-name <name>', 'Name a new conversation (ignored for existing chats)')
     .option('--provider <provider>', 'LLM provider override')
     .option('--model <model>', 'Model override')
     .option('--tags <tags>', 'Comma-separated tags')
@@ -294,7 +295,7 @@ export function registerAssistantCommands(program: Command): void {
       withAction(async (identifier: unknown, opts: unknown) => {
         const id = identifier as string;
         const o = opts as {
-          message?: string; chatUid?: string; provider?: string; model?: string;
+          message?: string; chatUid?: string; chatName?: string; provider?: string; model?: string;
           tags?: string; file?: string[]; wait: boolean; detach?: boolean; fromJson?: string;
         };
         const client = createClient();
@@ -310,6 +311,7 @@ export function registerAssistantCommands(program: Command): void {
 
         if (o.message) dto.message = o.message;
         if (o.chatUid) dto.chatUid = o.chatUid;
+        if (o.chatName !== undefined) dto.chatName = o.chatName;
         if (o.provider) dto.provider = o.provider;
         if (o.model) dto.model = o.model;
         if (o.tags) dto.tags = o.tags.split(',').map(t => t.trim());
