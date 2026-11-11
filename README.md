@@ -55,6 +55,7 @@ devic assistants get <identifier>
 
 # Chat with an assistant (async + polling by default)
 devic assistants chat <identifier> -m "Hello"
+devic assistants chat <identifier> -m "Hello" --chat-name "Customer onboarding"
 devic assistants chat <identifier> -m "Hello" --no-wait   # sync mode
 devic assistants chat <identifier> -m "Hello" --detach    # return the chatUid, don't block
 devic assistants chat <identifier> -m "Hello" --chat-uid <uid>  # continue conversation
@@ -85,6 +86,10 @@ devic assistants chats watch <chatUid> --assistant <identifier>   # incremental 
 devic assistants chats tool-response <chatUid> --assistant <identifier> --from-json responses.json
 devic assistants chats search --assistant default --tags support,urgent --start-date 2024-01-01
 ```
+
+`--chat-name` sets the name only when a conversation is created, in either
+sync or async mode. Existing chats keep their name. Omit the flag or pass a blank
+name to keep automatic naming. It can also be supplied as `chatName` in JSON.
 
 ### Agents
 

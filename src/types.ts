@@ -80,6 +80,8 @@ export interface ToolCallResponse {
 export interface ProcessMessageDto {
   message: string;
   chatUid?: string;
+  /** Name for a new conversation only; existing chats are never renamed. */
+  chatName?: string;
   userName?: string;
   files?: ChatFile[];
   metadata?: Record<string, unknown>;
