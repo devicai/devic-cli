@@ -1,3 +1,4 @@
+import { EFFORT_HELP, parseReasoningEffort } from '../reasoning.js';
 import { Command } from 'commander';
 import {
   createClient,
@@ -80,6 +81,7 @@ function formatAssistant(a: AssistantSpecialization): string {
   if (a.state) lines.push(`**State:** ${md.status(a.state)} ${a.state}`);
   if (a.model) lines.push(`**Model:** ${a.model}`);
   if (a.provider) lines.push(`**Provider:** ${a.provider}`);
+  lines.push(`**Reasoning effort:** ${a.reasoningEffort ?? 'default'}`);
   if (a.isCustom != null) lines.push(`**Custom:** ${a.isCustom ? 'Yes' : 'No'}`);
   if (a.creationTimestampMs) lines.push(`**Created:** ${new Date(a.creationTimestampMs).toLocaleString()}`);
   return lines.join('\n');
@@ -139,6 +141,7 @@ export function registerAssistantCommands(program: Command): void {
         ];
         if (a.model) lines.push(`**Model:** ${a.model}`);
         if (a.provider) lines.push(`**Provider:** ${a.provider}`);
+        lines.push(`**Reasoning effort:** ${a.reasoningEffort ?? 'default'}`);
         if (a.isCustom != null) lines.push(`**Custom:** ${a.isCustom ? 'Yes' : 'No'}`);
         if (a.creationTimestampMs) lines.push(`**Created:** ${new Date(a.creationTimestampMs).toLocaleString()}`);
 
@@ -174,6 +177,7 @@ export function registerAssistantCommands(program: Command): void {
       .description('Create a new assistant')
       .option('--name <name>', 'Assistant name')
       .option('--description <desc>', 'Assistant description')
+      .option('--reasoning-effort <level>', EFFORT_HELP)
       .option('--project <project>', 'Project this assistant belongs to (_id, identifier, or name)')
       .option('--from-json <file>', 'Read full assistant config from JSON file (- for stdin)'),
   ).action(
@@ -181,6 +185,7 @@ export function registerAssistantCommands(program: Command): void {
         const o = opts as {
           name?: string;
           description?: string;
+          reasoningEffort?: string;
           project?: string;
           fromJson?: string;
           skipValidation?: boolean;
@@ -196,6 +201,7 @@ export function registerAssistantCommands(program: Command): void {
           if (o.description) data.description = o.description;
           if (o.project) data.projectId = await resolveProjectId(client, o.project);
         }
+        if (o.reasoningEffort !== undefined) data.reasoningEffort = parseReasoningEffort(o.reasoningEffort);
         return client.createAssistant(data);
       }, (d) => {
         const a = d as AssistantSpecialization;
@@ -210,6 +216,7 @@ export function registerAssistantCommands(program: Command): void {
       .description('Update an assistant')
       .option('--name <name>', 'Assistant name')
       .option('--description <desc>', 'Assistant description')
+      .option('--reasoning-effort <level>', EFFORT_HELP)
       .option('--project <project>', 'Project _id, identifier, or name (use "null" to unset)')
       .option(
         '--enabled-tools <names>',
@@ -222,6 +229,7 @@ export function registerAssistantCommands(program: Command): void {
         const o = opts as {
           name?: string;
           description?: string;
+          reasoningEffort?: string;
           project?: string;
           enabledTools?: string;
           allTools?: boolean;
@@ -252,6 +260,7 @@ export function registerAssistantCommands(program: Command): void {
             .map((name) => name.trim())
             .filter((name) => name.length > 0);
         }
+        if (o.reasoningEffort !== undefined) data.reasoningEffort = parseReasoningEffort(o.reasoningEffort);
         return client.updateAssistant(identifier as string, data);
       }, (d) => {
         const a = d as AssistantSpecialization;
@@ -282,6 +291,8 @@ export function registerAssistantCommands(program: Command): void {
     .option('--chat-name <name>', 'Name a new conversation (ignored for existing chats)')
     .option('--provider <provider>', 'LLM provider override')
     .option('--model <model>', 'Model override')
+    .option('--reasoning-effort <level>', `This message only. ${EFFORT_HELP}`)
+    .option('--conversation-reasoning-effort <level>', `Save the conversation default. ${EFFORT_HELP}`)
     .option('--tags <tags>', 'Comma-separated tags')
     .option(
       '--file <url...>',
@@ -296,6 +307,7 @@ export function registerAssistantCommands(program: Command): void {
         const id = identifier as string;
         const o = opts as {
           message?: string; chatUid?: string; chatName?: string; provider?: string; model?: string;
+          reasoningEffort?: string; conversationReasoningEffort?: string;
           tags?: string; file?: string[]; wait: boolean; detach?: boolean; fromJson?: string;
         };
         const client = createClient();
@@ -314,6 +326,8 @@ export function registerAssistantCommands(program: Command): void {
         if (o.chatName !== undefined) dto.chatName = o.chatName;
         if (o.provider) dto.provider = o.provider;
         if (o.model) dto.model = o.model;
+        if (o.reasoningEffort !== undefined) dto.reasoningEffort = parseReasoningEffort(o.reasoningEffort);
+        if (o.conversationReasoningEffort !== undefined) dto.conversationReasoningEffort = parseReasoningEffort(o.conversationReasoningEffort);
         if (o.tags) dto.tags = o.tags.split(',').map(t => t.trim());
         if (o.file?.length) {
           dto.files = [
@@ -445,6 +459,8 @@ export function registerAssistantCommands(program: Command): void {
           `**Created:** ${new Date(h.creationTimestampMs).toLocaleString()}`,
         ];
         if (h.llm) lines.push(`**Model:** ${h.llm}`);
+        lines.push(`**Conversation reasoning effort:** ${h.reasoningEffort ?? 'default'}`);
+        if (h.effectiveReasoningEffort) lines.push(`**Last effective reasoning effort:** ${h.effectiveReasoningEffort}`);
         if (h.inputTokens != null) lines.push(`**Tokens:** ${h.inputTokens} in / ${h.outputTokens ?? 0} out`);
         if (h.handedOff) lines.push(`**Handed Off:** Yes (thread: ${md.code(h.handedOffSubThreadId ?? '?')})`);
         if (h.chatContent && h.chatContent.length > 0) {

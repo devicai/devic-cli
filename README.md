@@ -54,6 +54,7 @@ devic assistants list --external
 devic assistants get <identifier>
 
 # Chat with an assistant (async + polling by default)
+devic models list --provider open-ai                # current compatible levels per model
 devic assistants chat <identifier> -m "Hello"
 devic assistants chat <identifier> -m "Hello" --chat-name "Customer onboarding"
 devic assistants chat <identifier> -m "Hello" --no-wait   # sync mode
@@ -80,6 +81,11 @@ correctly spelled `downloadUrl` is translated instead of being ignored.
 devic assistants stop <identifier> <chatUid>
 
 # Chat histories
+devic assistants update <identifier> --reasoning-effort high
+# Save a conversation default and override only this turn:
+devic assistants chat <identifier> -m "Review" --conversation-reasoning-effort low --reasoning-effort high
+# Restore inheritance on an existing conversation:
+devic assistants chat <identifier> --chat-uid <uid> -m "Continue" --conversation-reasoning-effort default
 devic assistants chats list <identifier> --limit 20
 devic assistants chats get <identifier> <chatUid>
 devic assistants chats watch <chatUid> --assistant <identifier>   # incremental monitoring
@@ -91,7 +97,17 @@ devic assistants chats search --assistant default --tags support,urgent --start-
 sync or async mode. Existing chats keep their name. Omit the flag or pass a blank
 name to keep automatic naming. It can also be supplied as `chatName` in JSON.
 
-### Agents
+#Reasoning effort levels are model-specific: run `devic models list` to discover them.
+`--reasoning-effort` works on assistant `create`/`update` (saved default) and `chat`
+(this turn only). `--conversation-reasoning-effort` on `chat` persists the chat default.
+Precedence is message → conversation → assistant → provider default. `default`
+(or `null`) sends JSON `null` to restore inheritance; `none` is an explicit model level.
+Omitting the flags preserves existing settings. Explicit effort flags override
+`--from-json` fields, including resets. JSON uses the native field names
+`reasoningEffort` and `conversationReasoningEffort`, with `null` for inheritance.
+`assistants get` and `assistants chats get` show the saved and effective values.
+
+## Agents
 
 ```bash
 # CRUD

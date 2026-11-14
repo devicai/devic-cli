@@ -191,6 +191,7 @@ const ASSISTANT_SCHEMA: Schema = {
     'projectId',
     'presets',
     'model',
+    'reasoningEffort',
     'provider',
     'imgUrl',
     'state',

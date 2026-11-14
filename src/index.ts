@@ -8,6 +8,7 @@ import { setGlobalBaseUrl } from './config.js';
 import { EXIT_CODES } from './types.js';
 import type { OutputFormat } from './types.js';
 
+import { registerModelCommands } from './commands/models.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerAssistantCommands } from './commands/assistants.js';
 import { registerAgentCommands } from './commands/agents.js';
@@ -44,6 +45,7 @@ program
     }
   });
 
+registerModelCommands(program);
 registerAuthCommands(program);
 registerAssistantCommands(program);
 registerAgentCommands(program);

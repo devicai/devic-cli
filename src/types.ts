@@ -56,6 +56,7 @@ export interface ToolCall {
 }
 
 export interface ChatMessage {
+  messageTokenUsage?: { reasoningEffort?: ReasoningEffort; [key: string]: unknown };
   uid: string;
   role: 'user' | 'assistant' | 'developer' | 'tool';
   content: MessageContent;
@@ -77,7 +78,13 @@ export interface ToolCallResponse {
   role: 'tool';
 }
 
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface ProcessMessageDto {
+  /** This turn only; null inherits the conversation or assistant default. */
+  reasoningEffort?: ReasoningEffort | null;
+  /** Persisted default; null restores assistant inheritance. */
+  conversationReasoningEffort?: ReasoningEffort | null;
   message: string;
   chatUid?: string;
   /** Name for a new conversation only; existing chats are never renamed. */
@@ -128,6 +135,8 @@ export interface RealtimeChatHistory {
 }
 
 export interface ChatHistory {
+  reasoningEffort?: ReasoningEffort | null;
+  effectiveReasoningEffort?: ReasoningEffort;
   chatUID: string;
   clientUID: string;
   userUID: string;
@@ -148,6 +157,7 @@ export interface ChatHistory {
 }
 
 export interface AssistantSpecialization {
+  reasoningEffort?: ReasoningEffort | null;
   _id?: string;
   identifier: string;
   name: string;
@@ -445,3 +455,16 @@ export const EXIT_CODES = {
   /** `watch`: no progress for several consecutive checks. */
   WATCH_STALLED: 13,
 } as const;
+
+/** Shared model capabilities, not account credentials or availability. */
+export interface ModelCatalogProvider {
+  provider: string;
+  reasoningEfforts: ReasoningEffort[];
+  models: Array<{
+    model: string;
+    provider: string;
+    reasoningEfforts: ReasoningEffort[];
+    reasoning: boolean;
+    vision: boolean;
+  }>;
+}
