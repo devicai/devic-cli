@@ -1,5 +1,6 @@
 import type {
   AssistantSpecialization,
+  ModelCatalogProvider,
   AsyncResponse,
   ProcessMessageDto,
   ChatMessage,
@@ -68,6 +69,10 @@ export class DevicApiClient {
 
   constructor(config: DevicApiClientConfig) {
     this.config = config;
+  }
+
+  async getModels(): Promise<ModelCatalogProvider[]> {
+    return this.request<ModelCatalogProvider[]>('/api/v1/models');
   }
 
   private async refresh(): Promise<string> {
