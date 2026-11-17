@@ -189,6 +189,28 @@ test('answer fetches revision and inputId from the thread', async () => {
   assert.equal(notWaiting.calls.length, 1);
 });
 
+test('approve fetches revision and actionId from the thread', async () => {
+  const route = (c) => c.method === 'GET'
+    ? { data: { thread: { id: 't1' }, messages: [], invocations: [
+        { id: 'r0', status: 'running', revision: 3 },
+        { id: 'r1', status: 'waiting_approval', revision: 14, requestedAction: { id: 'call_x' } },
+      ] } }
+    : { data: { id: 'r1', status: 'queued' } };
+
+  const r = await run(['ws', 'approve', 'w1', 't1', 'r1'], { route });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.calls[1].url, `${WS}/w1/threads/t1/invocations/r1/approve`);
+  assert.deepEqual(r.calls[1].body, { revision: 14, actionId: 'call_x' });
+
+  const always = await run(['ws', 'approve', 'w1', 't1', 'r1', '--always'], { route });
+  assert.deepEqual(always.calls[1].body, { revision: 14, actionId: 'call_x', always: true });
+
+  const notWaiting = await run(['ws', 'approve', 'w1', 't1', 'r0'], { route });
+  assert.notEqual(notWaiting.code, 0);
+  assert.match(notWaiting.stderr, /NOT_WAITING_FOR_APPROVAL/);
+  assert.equal(notWaiting.calls.length, 1);
+});
+
 test('files download writes the bytes under the server name and refuses to overwrite', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'devic-ws-dl-'));
   const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x10]);

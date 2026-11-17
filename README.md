@@ -314,6 +314,7 @@ devic ws send <wid> <tid> "Draft the summary" --assistant <aid> --wait
 echo "long text" | devic ws send <wid> <tid> -
 devic ws answer <wid> <tid> <invocationId> --answers '[{"id":"q1","selected":["eur"]}]'
 devic ws answer <wid> <tid> <invocationId> --skip
+devic ws approve <wid> <tid> <invocationId> [--always]      # tool call waiting for approval
 devic ws run-action <wid> <tid> <invocationId> cancel
 
 # Files and documents

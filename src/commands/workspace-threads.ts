@@ -427,6 +427,45 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
       }, (d) => md.success(`Answer sent.${(d as any)?.status ? ` Invocation is now ${(d as any).status}.` : ''}`)),
     );
 
+  ws.command('approve <wid> <tid> <invocationId>')
+    .description('Approve the tool call an invocation is waiting on; revision and actionId are fetched')
+    .option('--always', 'Also approve this tool for the future (when the run allows it)')
+    .option('--revision <n>', 'Invocation revision (skips fetching the thread)')
+    .option('--action-id <id>', 'requestedAction.id (skips fetching the thread)')
+    .action(
+      withAction(async (wid: unknown, tid: unknown, rid: unknown, opts: unknown) => {
+        const o = opts as { always?: boolean; revision?: string; actionId?: string };
+        const client = createClient();
+        let revision = intOpt(o.revision, '--revision');
+        let actionId = o.actionId;
+        if (revision == null || actionId == null) {
+          const detail = (await client.getWorkspaceThread(wid as string, tid as string)) as any;
+          const inv = (Array.isArray(detail?.invocations) ? detail.invocations : []).find(
+            (i: any) => String(i?.id) === rid,
+          );
+          if (!inv) {
+            throw new DevicCliError(
+              `Invocation ${rid} is not among the thread's open invocations. Pass --revision and --action-id to approve it anyway.`,
+              'INVOCATION_NOT_FOUND',
+            );
+          }
+          revision ??= inv.revision;
+          actionId ??= inv.requestedAction?.id;
+          if (inv.status !== 'waiting_approval' || actionId == null) {
+            throw new DevicCliError(
+              `Invocation ${rid} is not waiting for an approval (status: ${inv.status ?? 'unknown'}).`,
+              'NOT_WAITING_FOR_APPROVAL',
+            );
+          }
+        }
+        return client.runWorkspaceInvocationAction(wid as string, tid as string, rid as string, 'approve', {
+          revision,
+          actionId,
+          ...(o.always ? { always: true } : {}),
+        });
+      }, (d) => md.success(`Approved.${(d as any)?.status ? ` Invocation is now ${(d as any).status}.` : ''}`)),
+    );
+
   ws.command('run-action <wid> <tid> <invocationId> <action>')
     .description('Run any invocation action (cancel, retry, approve, answer, ...) with a raw body')
     .option('--data <json|file|->', 'Request body')
