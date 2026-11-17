@@ -280,6 +280,103 @@ Attach one by adding its id to `codeSnippetIds` (an assistant's top level, an
 agent's `assistantSpecialization`). If the entity has an `enabledTools` list,
 put the snippet's `toolName` in it too, or runs leave the snippet out.
 
+### Workspaces
+
+Shared spaces where people and assistants work together in threads. Alias
+`devic ws`. Ids go workspace → thread → invocation/file: `<wid> <tid> ...`.
+
+**Who you act as.** The API acts as the token's person. With an API key, pick a
+person of the account with `--as <userUID|email>` (anywhere on the line) or
+`DEVIC_USER`; it is sent as `X-Devic-User` (Workspaces requests only) and that
+person's permissions apply. Without it the key acts as the account's "API"
+integration, which only sees shared workspaces.
+
+```bash
+devic ws me                                           # principal: person | integration
+devic ws --as ana@acme.com list --search ventas --limit 20
+devic ws get <wid>
+devic ws create --name "Finance" --description "Month-end close"
+devic ws update <wid> --name "Finance ES" --revision 7   # or --data <json|file|->
+devic ws catalog
+
+# Threads (no --workspace = across every workspace you see)
+devic ws threads list --unread --search "factura"
+devic ws threads list --workspace <wid> --archived
+devic ws threads get <wid> <tid>                      # transcript, read state, pending questions
+devic ws threads messages <wid> <tid> --before 120 --limit 50   # or --after <seq>
+devic ws threads create <wid> --title "Q3 close"
+devic ws threads rename <wid> <tid> "Q3 close (final)"
+devic ws threads archive <wid> <tid>                  # unarchive
+devic ws threads read <wid> <tid> [--through <seq>]   # unread
+
+# Talk to assistants
+devic ws send <wid> <tid> "Draft the summary" --assistant <aid> --wait
+echo "long text" | devic ws send <wid> <tid> -
+devic ws answer <wid> <tid> <invocationId> --answers '[{"id":"q1","selected":["eur"]}]'
+devic ws answer <wid> <tid> <invocationId> --skip
+devic ws run-action <wid> <tid> <invocationId> cancel
+
+# Files and documents
+devic ws files list <wid> <tid>
+devic ws files download <wid> <tid> <fileId> --out ./downloads/
+devic ws documents <wid> --extension pdf --thread <tid>
+
+# People, assistants, resources
+devic ws members set <wid> <userUID> --role manager    # owner | manager | member | viewer
+devic ws members remove <wid> <userUID>
+devic ws assistants list <wid>                         # get | add --data | update --data | remove
+devic ws resources get <wid>
+devic ws resources set <wid> --data '{"knowledge":["<docId>"]}'
+devic ws skills catalog <wid> --search finance
+devic ws skills attach <wid> <skillId> [folder:<folderId>...]  # detach
+devic ws knowledge catalog <wid>
+
+# Assistant core memory, rules, automations
+devic ws memory list <wid> <aid>
+devic ws memory add <wid> <aid> --section decisions --content "Prices in EUR" --pinned
+devic ws memory update <wid> <aid> <entryId> --unpinned
+devic ws memory remove <wid> <aid> <entryId>
+devic ws rules get <wid> [--thread <tid>]
+devic ws rules set <wid> --file rules.md               # expectedRevision filled in
+devic ws rules history <wid>
+devic ws automations list <wid>                        # get | create --data | update --data | delete
+devic ws automations invoke <wid> <automationId>       # activate | pause | test
+devic ws automations runs <wid> --automation <id> --query status=failed
+devic ws automations run <wid> <runId> --summary       # rerun
+```
+
+**`send --wait`** polls `GET .../messages?after=<seq of your message>` until
+every invocation the message started is terminal (`completed`, `failed`,
+`cancelled`, `outcome_unknown`) or waiting on someone (`waiting_*`). When a
+messages page does not mention one of them, the thread detail is read for its
+status. The result is `{message, outcome, invocations, messages}` with `outcome`
+`completed` | `failed` | `waiting` | `no_invocations`; status changes stream as
+`{"type":"workspace_invocation",...}` NDJSON lines in JSON mode. `--timeout`
+(seconds, default 300) exits 3; `--poll-interval` (seconds, default 1) backs off
+to 5 s.
+
+**`answer`** reads the thread to find the invocation's `revision` and
+`requestedInput.id`; pass `--revision` and `--input-id` to skip that.
+`--answers` takes an array (or `{answers:[...]}`) of
+`{id, selected?: string[], other?, note?}`, inline, from a file, or `-`.
+
+**`files download`** names the file from `Content-Disposition` (the
+`filename*=UTF-8''` form first), in the current directory unless `--out` gives a
+file, a directory (existing or ending in `/`) or `-` (stdout). It refuses to
+overwrite an existing file unless `--force`.
+
+**Revisions.** `rules set` sends the current revision as `expectedRevision`
+(`--expected-revision` to give it yourself; `0` when the rules have none yet).
+`resources set` fills `revision` from the current resources when the body has
+none. `assistants remove` uses `--revision`, else the assistant's `revision`,
+else the workspace's.
+
+**Skills attach/detach** is a read-modify-write of `resources.knowledgeSkills`.
+A skill is linked as `{type: "document" | "folder", id}`: pass `<id>` (or
+`document:<id>`) for a skill document and `folder:<id>` for a skill folder; find
+them with `devic ws skills catalog <wid>`. The list is written back without its
+display fields with `PUT /resources {knowledgeSkills, revision}`.
+
 ### Feedback
 
 ```bash
@@ -553,6 +650,7 @@ Credentials are stored in `~/.config/devic/config.json`. Environment variables t
 |----------|-------------|
 | `DEVIC_API_KEY` | API key (overrides stored config) |
 | `DEVIC_BASE_URL` | API base URL (default: `https://api.devic.ai`) |
+| `DEVIC_USER` | Workspaces: person of the account to act as (userUID or email). `devic ws --as` wins over it |
 
 ## Requirements
 

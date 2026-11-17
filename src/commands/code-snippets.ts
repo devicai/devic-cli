@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { Command } from 'commander';
-import { createClient, withAction, readJsonInput, readTextStdin } from '../helpers.js';
+import { createClient, withAction, readJsonInput, readJsonArg, readTextStdin } from '../helpers.js';
 import { md } from '../output.js';
 import { DevicCliError } from '../errors.js';
 
@@ -22,20 +22,6 @@ const FENCE: Record<string, string> = {
 /** `-` reads stdin, anything else is a path. */
 async function readText(path: string): Promise<string> {
   return path === '-' ? readTextStdin() : readFileSync(path, 'utf-8');
-}
-
-/** A JSON value given inline (`{...}`, `[...]`) or as a file path. */
-async function readJsonArg(value: string, flag: string): Promise<unknown> {
-  const trimmed = value.trim();
-  try {
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return JSON.parse(trimmed);
-    return value === '-' ? JSON.parse(await readTextStdin()) : readJsonInput(value);
-  } catch (err) {
-    throw new DevicCliError(
-      `${flag}: not valid JSON (${err instanceof Error ? err.message : String(err)}).`,
-      'INVALID_USAGE',
-    );
-  }
 }
 
 function languageOf(explicit: string | undefined, codeFile: string | undefined): string | undefined {

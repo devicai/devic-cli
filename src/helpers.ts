@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { DevicApiClient } from './client.js';
 import { DevicCliError } from './errors.js';
 import { DevicApiError } from './errors.js';
-import { loadConfig, saveConfig } from './config.js';
+import { loadConfig, saveConfig, getActingUser } from './config.js';
 import { output, outputError } from './output.js';
 import { EXIT_CODES } from './types.js';
 import { refreshAccessToken } from './oauth.js';
@@ -19,11 +19,13 @@ export function createClient(): DevicApiClient {
   // An explicit `DEVIC_API_KEY` wins over a stored OAuth session, as documented:
   // otherwise scripts that export a key silently keep using the browser login.
   const envApiKey = process.env['DEVIC_API_KEY'];
+  const actingUser = getActingUser();
 
   if (config.oauth?.accessToken && !envApiKey) {
     return new DevicApiClient({
       apiKey: config.oauth.accessToken,
       baseUrl,
+      actingUser,
       refreshToken: async () => {
         const fresh = await loadConfig();
         if (!fresh.oauth?.refreshToken) {
@@ -54,7 +56,7 @@ export function createClient(): DevicApiClient {
       EXIT_CODES.AUTH_REQUIRED,
     );
   }
-  return new DevicApiClient({ apiKey: config.apiKey, baseUrl });
+  return new DevicApiClient({ apiKey: config.apiKey, baseUrl, actingUser });
 }
 
 /** Read raw text from stdin until EOF. */
@@ -81,6 +83,23 @@ export async function readJsonInput(path: string): Promise<Record<string, unknow
     return JSON.parse(await readTextStdin());
   }
   return JSON.parse(readFileSync(path, 'utf-8'));
+}
+
+/**
+ * A JSON value given inline (`{...}`, `[...]`), as a file path, or `-` for
+ * stdin. `flag` names the option in the error message.
+ */
+export async function readJsonArg(value: string, flag: string): Promise<unknown> {
+  const trimmed = value.trim();
+  try {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return JSON.parse(trimmed);
+    return value === '-' ? JSON.parse(await readTextStdin()) : readJsonInput(value);
+  } catch (err) {
+    throw new DevicCliError(
+      `${flag}: not valid JSON (${err instanceof Error ? err.message : String(err)}).`,
+      'INVALID_USAGE',
+    );
+  }
 }
 
 /**
