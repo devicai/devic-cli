@@ -6,7 +6,7 @@ import { md } from '../output.js';
 import { DevicCliError } from '../errors.js';
 import { countOf, dataObject, intOpt, itemsOf, revisionOf, textInput } from './workspace-shared.js';
 import { registerWorkspaceThreadCommands } from './workspace-threads.js';
-import { registerWorkspaceAutomationCommands } from './workspace-automations.js';
+import { registerWorkspaceAutomationCommands, registerWorkspaceConnectionCommands } from './workspace-automations.js';
 
 const MEMBER_ROLES = ['owner', 'manager', 'member', 'viewer'];
 const MEMORY_SECTIONS = ['persona', 'instructions', 'decisions', 'profile'];
@@ -507,4 +507,5 @@ export function registerWorkspaceCommands(program: Command): void {
 
   registerWorkspaceThreadCommands(ws);
   registerWorkspaceAutomationCommands(ws);
+  registerWorkspaceConnectionCommands(ws);
 }

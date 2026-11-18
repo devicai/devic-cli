@@ -333,3 +333,72 @@ test('threads list --kind direct is passed; anything else is refused', async () 
   const bad = await run(['ws', 'threads', 'list', '--kind', 'other']);
   assert.notEqual(bad.code, 0);
 });
+
+test('automations compose a draft with the designer read tools, then save it without activating', async () => {
+  const plan = { name: 'Daily', instructions: 'Post a summary', targetWorkspaceId: 'w2', source: { type: 'cron', expression: '0 9 * * 1-5', timezone: 'Europe/Madrid' }, connections: [] };
+  const r = await run(['ws', 'automations', 'draft', 'w1', 'a1', '--data', '-', '--draft-version', '2'], {
+    stdin: JSON.stringify(plan),
+    route: () => ({ data: { automation: { id: 'a1', draftVersion: 3, status: 'draft' }, requiresActivation: true } }),
+  });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.calls.length, 1);
+  assert.equal(r.calls[0].method, 'PUT');
+  assert.equal(r.calls[0].url, `${WS}/w1/automations/a1/draft`);
+  assert.deepEqual(r.calls[0].body, { ...plan, version: 2 });
+
+  const finds = await run(['ws', 'automations', 'find-threads', 'w1', 'w2', '--query', 'thr_123', '--mode', 'literal', '--search-in', 'messages', '--limit', '5']);
+  assert.equal(finds.code, 0, finds.stderr);
+  assert.equal(finds.calls[0].url, `${WS}/w1/automations/destinations/w2/threads?query=thr_123&mode=literal&searchIn=messages&limit=5`);
+
+  for (const [args, url] of [
+    [['capabilities', 'w1'], `${WS}/w1/automations/capabilities`],
+    [['destinations', 'w1'], `${WS}/w1/automations/destinations`],
+    [['destination-assistants', 'w1', 'w2'], `${WS}/w1/automations/destinations/w2/assistants`],
+    [['read-thread', 'w1', 'w2', 't9', '--after-seq', '0'], `${WS}/w1/automations/destinations/w2/threads/t9?afterSeq=0`],
+    [['connections', 'w1'], `${WS}/w1/automations/connections`],
+    [['connection-tools', 'w1', 'c1'], `${WS}/w1/automations/connections/c1/tools`],
+    [['triggers', 'w1', '--integration', 'gmail', '--query', 'new email'], `${WS}/w1/automations/triggers?integration=gmail&query=new+email`],
+    [['trigger', 'w1', 'GMAIL_NEW_GMAIL_MESSAGE'], `${WS}/w1/automations/triggers/GMAIL_NEW_GMAIL_MESSAGE`],
+  ]) {
+    const x = await run(['ws', 'automations', ...args]);
+    assert.equal(x.code, 0, x.stderr);
+    assert.equal(x.calls[0].method, 'GET');
+    assert.equal(x.calls[0].url, url);
+  }
+});
+
+test('automations activate --included takes the model from capabilities and the current draft version', async () => {
+  const r = await run(['ws', 'automations', 'activate', 'w1', 'a1', '--included'], {
+    route: (call) => call.url.endsWith('/capabilities')
+      ? { data: { includedModel: { modelAccess: 'included', provider: 'deepseek', model: 'deepseek-chat' } } }
+      : call.method === 'GET' ? { data: { id: 'a1', draftVersion: 4 } } : { data: { id: 'a1', status: 'active' } },
+  });
+  assert.equal(r.code, 0, r.stderr);
+  const post = r.calls.find((c) => c.method === 'POST');
+  assert.equal(post.url, `${WS}/w1/automations/a1/activate`);
+  assert.deepEqual(post.body, { modelAccess: 'included', provider: 'deepseek', model: 'deepseek-chat', version: 4 });
+
+  const missing = await run(['ws', 'automations', 'activate', 'w1', 'a1', '--draft-version', '1']);
+  assert.notEqual(missing.code, 0);
+  assert.equal(missing.calls.length, 0);
+});
+
+test('connections connect returns the authorization link and never sends app-internal fields', async () => {
+  const r = await run(['ws', 'connections', 'connect', 'w1', 'gmail', '--scope', 'workspace', '--name', 'Sales Gmail'], {
+    route: () => ({ data: { id: 'c1', status: 'pending', redirectUrl: 'https://auth.example/consent' } }),
+  });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.calls[0].url, `${WS}/w1/connections`);
+  assert.deepEqual(r.calls[0].body, { integration: 'gmail', scope: 'workspace', name: 'Sales Gmail' });
+  assert.equal(finalJson(r.stdout).redirectUrl, 'https://auth.example/consent');
+
+  const bad = await run(['ws', 'connections', 'connect', 'w1', 'gmail', '--scope', 'everyone']);
+  assert.notEqual(bad.code, 0);
+  assert.equal(bad.calls.length, 0);
+
+  const search = await run(['ws', 'integrations', 'search', 'w1', 'send invoices', '--semantic']);
+  assert.equal(search.calls[0].url, `${WS}/w1/integrations/catalog?search=send+invoices&semantic=true`);
+  const disable = await run(['ws', 'connections', 'disable', 'w1', 'c1']);
+  assert.equal(disable.calls[0].method, 'DELETE');
+  assert.equal(disable.calls[0].url, `${WS}/w1/connections/c1/grant`);
+});
