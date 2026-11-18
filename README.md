@@ -347,10 +347,31 @@ devic ws memory remove <wid> <aid> <entryId>
 devic ws rules get <wid> [--thread <tid>]
 devic ws rules set <wid> --file rules.md               # expectedRevision filled in
 devic ws rules history <wid>
-devic ws automations list <wid>                        # get | create --data | update --data | delete
-devic ws automations invoke <wid> <automationId>       # activate | pause | test
+devic ws automations list <wid>                        # get | update --data | delete
 devic ws automations runs <wid> --automation <id> --query status=failed
 devic ws automations run <wid> <runId> --summary       # rerun
+
+# Compose an automation without the in-app designer (draft first, a person activates)
+devic ws automations capabilities <wid>                # sources + included model
+devic ws automations destinations <wid>                # targetWorkspaceId candidates
+devic ws automations destination-assistants <wid> <target>
+devic ws automations find-threads <wid> <target> --query thr_123 --mode literal --search-in messages
+devic ws automations read-thread <wid> <target> <tid> --query thr_123
+devic ws automations connections <wid>                 # eligible accounts
+devic ws automations connection-tools <wid> <connectionId>
+devic ws automations triggers <wid> --integration gmail --query "new email"
+devic ws automations trigger <wid> GMAIL_NEW_GMAIL_MESSAGE
+devic ws automations schedule-preview <wid> --data '{"expression":"0 9 * * 1-5","timezone":"Europe/Madrid"}'
+devic ws automations create <wid> --name "Daily summary"
+devic ws automations draft <wid> <id> --data plan.json [--draft-version <n>]
+devic ws automations activate <wid> <id> --included   # or --provider --model; pause | invoke | test --data
+
+# Connected app accounts of a workspace
+devic ws integrations search <wid> "send invoices" --semantic
+devic ws connections list <wid>
+devic ws connections connect <wid> gmail --scope workspace --name "Sales Gmail"   # prints the authorization link
+devic ws connections reconnect <wid> <connectionId>
+devic ws connections enable|disable <wid> <connectionId>                           # your own account here
 ```
 
 **`send --wait`** polls `GET .../messages?after=<seq of your message>` until

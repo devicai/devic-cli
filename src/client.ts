@@ -1544,6 +1544,72 @@ export class DevicApiClient {
     return this.wsJson('POST', `/${seg(wid)}/automation-runs/${seg(runId)}/rerun`, {});
   }
 
+  // Composing a draft without the designer: the designer's own read tools.
+
+  async getWorkspaceAutomationCapabilities(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/capabilities`);
+  }
+
+  async listWorkspaceAutomationDestinations(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/destinations`);
+  }
+
+  async listWorkspaceAutomationDestinationAssistants(wid: string, target: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/destinations/${seg(target)}/assistants`);
+  }
+
+  async findWorkspaceAutomationThreads(wid: string, target: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/destinations/${seg(target)}/threads`, {}, query);
+  }
+
+  async readWorkspaceAutomationThread(wid: string, target: string, tid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/destinations/${seg(target)}/threads/${seg(tid)}`, {}, query);
+  }
+
+  async listWorkspaceAutomationConnections(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/connections`);
+  }
+
+  async listWorkspaceAutomationConnectionTools(wid: string, cid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/connections/${seg(cid)}/tools`);
+  }
+
+  async searchWorkspaceAutomationTriggers(wid: string, query: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/triggers`, {}, query);
+  }
+
+  async getWorkspaceAutomationTrigger(wid: string, slug: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/triggers/${seg(slug)}`);
+  }
+
+  /** Saves the next draft version; never activates. */
+  async saveWorkspaceAutomationDraft(wid: string, id: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PUT', `/${seg(wid)}/automations/${seg(id)}/draft`, body);
+  }
+
+  // Workspace integrations (connected app accounts)
+
+  async searchWorkspaceIntegrations(wid: string, query: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/integrations/catalog`, {}, query);
+  }
+
+  async listWorkspaceConnections(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/connections`);
+  }
+
+  /** Starts a connection; the response carries the authorization `redirectUrl`. */
+  async connectWorkspaceIntegration(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/connections`, body);
+  }
+
+  async reconnectWorkspaceConnection(wid: string, cid: string, body: Record<string, unknown> = {}): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/connections/${seg(cid)}/reconnect`, body);
+  }
+
+  async setWorkspaceConnectionGrant(wid: string, cid: string, enabled: boolean): Promise<unknown> {
+    return this.wsJson(enabled ? 'POST' : 'DELETE', `/${seg(wid)}/connections/${seg(cid)}/grant`, enabled ? {} : undefined);
+  }
+
   async getWorkspaceAutomationRunSummary(wid: string, runId: string): Promise<unknown> {
     return this.ws(`/${seg(wid)}/automation-runs/${seg(runId)}/summary`);
   }
