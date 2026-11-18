@@ -12,6 +12,22 @@ export function setGlobalBaseUrl(url: string): void {
   globalBaseUrl = url;
 }
 
+let globalActingUser: string | undefined;
+
+/** `devic workspaces --as <user>`: wins over `DEVIC_USER`. */
+export function setGlobalActingUser(user: string): void {
+  globalActingUser = user;
+}
+
+/**
+ * Person of the account the Workspaces API acts as (userUID or email), from
+ * `--as` or `DEVIC_USER`. Undefined means "whoever the token is".
+ */
+export function getActingUser(): string | undefined {
+  const value = (globalActingUser ?? process.env['DEVIC_USER'])?.trim();
+  return value ? value : undefined;
+}
+
 function readConfigFile(): CliConfig {
   try {
     if (!existsSync(CONFIG_FILE)) return {};

@@ -42,6 +42,29 @@ export interface DevicApiClientConfig {
   refreshToken?: () => Promise<string>;
   /** Optional hook that returns true when the token should be refreshed before sending. */
   shouldRefreshProactively?: () => boolean;
+  /**
+   * Person of the account to act as on the Workspaces API (userUID or email),
+   * sent as `X-Devic-User`. Without it an API key acts as the account's "API"
+   * integration.
+   */
+  actingUser?: string;
+}
+
+const WORKSPACES_BASE = '/api/v1/workspaces';
+
+type Query = Record<string, string | number | boolean | undefined | null>;
+
+function queryString(query?: Query): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value != null && value !== '') params.set(key, String(value));
+  }
+  const q = params.toString();
+  return q ? `?${q}` : '';
+}
+
+function seg(value: string): string {
+  return encodeURIComponent(value);
 }
 
 /**
@@ -92,8 +115,33 @@ export class DevicApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    isRetry = false,
   ): Promise<T> {
+    const response = await this.send(endpoint, options);
+
+    // 204 No Content has no body to parse (e.g. recording an uninstall).
+    if (response.status === 204) return undefined as T;
+
+    const data = await response.json();
+    if (isGatewayEnvelope(data)) {
+      return data.data as T;
+    }
+    return data as T;
+  }
+
+  /**
+   * Same auth, refresh and error handling as {@link request}, but hands back
+   * the successful `Response` untouched — for binary downloads, where the body
+   * is bytes and the headers (Content-Disposition, Content-Type) matter.
+   */
+  async requestRaw(endpoint: string, options: RequestInit = {}): Promise<Response> {
+    return this.send(endpoint, options);
+  }
+
+  private async send(
+    endpoint: string,
+    options: RequestInit = {},
+    isRetry = false,
+  ): Promise<Response> {
     if (
       !isRetry &&
       this.config.refreshToken &&
@@ -107,11 +155,16 @@ export class DevicApiClient {
     }
 
     const url = `${this.config.baseUrl}${endpoint}`;
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${this.config.apiKey}`,
       'devic-api-source': 'cli',
-      ...options.headers,
+      // Acting as a person of the account only means something to the
+      // Workspaces API; elsewhere the header is never sent.
+      ...(this.config.actingUser && endpoint.startsWith(WORKSPACES_BASE)
+        ? { 'X-Devic-User': this.config.actingUser }
+        : {}),
+      ...(options.headers as Record<string, string> | undefined),
     };
 
     const response = await fetch(url, { ...options, headers });
@@ -121,7 +174,7 @@ export class DevicApiClient {
       if (response.status === 401 && this.config.refreshToken && !isRetry) {
         try {
           await this.refresh();
-          return this.request<T>(endpoint, options, true);
+          return this.send(endpoint, options, true);
         } catch (err) {
           // Refresh failed — fall through to surface the original 401.
         }
@@ -157,14 +210,7 @@ export class DevicApiClient {
       throw new DevicApiError(errorData);
     }
 
-    // 204 No Content has no body to parse (e.g. recording an uninstall).
-    if (response.status === 204) return undefined as T;
-
-    const data = await response.json();
-    if (isGatewayEnvelope(data)) {
-      return data.data as T;
-    }
-    return data as T;
+    return response;
   }
 
   // ── Assistants ──
@@ -1231,5 +1277,274 @@ export class DevicApiClient {
       `/api/v1/code-snippets/${encodeURIComponent(id)}/test`,
       { method: 'POST', body: JSON.stringify(body) },
     );
+  }
+
+  // ── Workspaces ──
+  // Identity is the token's person; with an API key, `actingUser` (header
+  // `X-Devic-User`) picks which person of the account the call acts as.
+
+  private ws<T = unknown>(path: string, init: RequestInit = {}, query?: Query): Promise<T> {
+    return this.request<T>(`${WORKSPACES_BASE}${path}${queryString(query)}`, init);
+  }
+
+  private wsJson<T = unknown>(method: string, path: string, body?: unknown, query?: Query): Promise<T> {
+    return this.ws<T>(
+      path,
+      { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) },
+      query,
+    );
+  }
+
+  async getWorkspaceMe(): Promise<unknown> {
+    return this.ws('/me');
+  }
+
+  async listWorkspaces(query?: Query): Promise<unknown> {
+    return this.ws('', {}, query);
+  }
+
+  async createWorkspace(body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', '', body);
+  }
+
+  async getWorkspaceCatalog(): Promise<unknown> {
+    return this.ws('/catalog');
+  }
+
+  async getWorkspace(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}`);
+  }
+
+  async updateWorkspace(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PATCH', `/${seg(wid)}`, body);
+  }
+
+  // Members
+
+  async setWorkspaceMember(wid: string, uid: string, body: { role: string; revision?: number }): Promise<unknown> {
+    return this.wsJson('PUT', `/${seg(wid)}/members/${seg(uid)}`, body);
+  }
+
+  async removeWorkspaceMember(wid: string, uid: string): Promise<unknown> {
+    return this.wsJson('DELETE', `/${seg(wid)}/members/${seg(uid)}`);
+  }
+
+  // Assistants
+
+  async listWorkspaceAssistants(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/assistants`);
+  }
+
+  async addWorkspaceAssistant(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/assistants`, body);
+  }
+
+  async getWorkspaceAssistant(wid: string, aid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/assistants/${seg(aid)}`);
+  }
+
+  async updateWorkspaceAssistant(wid: string, aid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PATCH', `/${seg(wid)}/assistants/${seg(aid)}`, body);
+  }
+
+  async removeWorkspaceAssistant(wid: string, aid: string, revision?: number): Promise<unknown> {
+    return this.wsJson('DELETE', `/${seg(wid)}/assistants/${seg(aid)}`, undefined, { revision });
+  }
+
+  // Resources, knowledge and skills
+
+  async getWorkspaceResources(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/resources`);
+  }
+
+  async setWorkspaceResources(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PUT', `/${seg(wid)}/resources`, body);
+  }
+
+  async getWorkspaceKnowledgeCatalog(wid: string, search?: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/knowledge/catalog`, {}, { search });
+  }
+
+  async getWorkspaceSkillsCatalog(wid: string, search?: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/skills/catalog`, {}, { search });
+  }
+
+  async listWorkspaceDocuments(wid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/documents`, {}, query);
+  }
+
+  // Threads
+
+  /** Threads across every workspace the caller sees, or one with `workspaceId`. */
+  async listWorkspaceThreads(query?: Query): Promise<unknown> {
+    return this.ws('/threads', {}, query);
+  }
+
+  /** Private conversations of the account: `{ workspaceId, items }` (workspaceId null before the first one). */
+  async listDirectMessages(): Promise<unknown> {
+    return this.ws('/direct-messages');
+  }
+
+  /** The conversation with this person (by userUID or email); the same one if it exists. */
+  async openDirectMessage(body: { userUID?: string; email?: string }): Promise<unknown> {
+    return this.wsJson('POST', '/direct-messages', body);
+  }
+
+  async listThreadsOfWorkspace(wid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/threads`, {}, query);
+  }
+
+  async createWorkspaceThread(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/threads`, body);
+  }
+
+  async getWorkspaceThread(wid: string, tid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/threads/${seg(tid)}`, {}, query);
+  }
+
+  async listWorkspaceThreadMessages(wid: string, tid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/threads/${seg(tid)}/messages`, {}, query);
+  }
+
+  async updateWorkspaceThread(wid: string, tid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PATCH', `/${seg(wid)}/threads/${seg(tid)}`, body);
+  }
+
+  async postWorkspaceMessage(wid: string, tid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/threads/${seg(tid)}/messages`, body);
+  }
+
+  async markWorkspaceThreadRead(wid: string, tid: string, throughSeq?: number): Promise<unknown> {
+    return this.wsJson(
+      'POST',
+      `/${seg(wid)}/threads/${seg(tid)}/read`,
+      throughSeq != null ? { throughSeq } : {},
+    );
+  }
+
+  async markWorkspaceThreadUnread(wid: string, tid: string): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/threads/${seg(tid)}/unread`, {});
+  }
+
+  async runWorkspaceInvocationAction(
+    wid: string,
+    tid: string,
+    rid: string,
+    action: string,
+    body: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    return this.wsJson(
+      'POST',
+      `/${seg(wid)}/threads/${seg(tid)}/invocations/${seg(rid)}/${seg(action)}`,
+      body,
+    );
+  }
+
+  async listWorkspaceThreadFiles(wid: string, tid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/threads/${seg(tid)}/files`);
+  }
+
+  /** Binary download: the raw Response, so the caller streams bytes to disk. */
+  async downloadWorkspaceThreadFile(wid: string, tid: string, fid: string): Promise<Response> {
+    return this.requestRaw(
+      `${WORKSPACES_BASE}/${seg(wid)}/threads/${seg(tid)}/files/${seg(fid)}/download`,
+    );
+  }
+
+  // Core memory of an assistant inside a workspace
+
+  async listWorkspaceCoreMemory(wid: string, aid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/assistants/${seg(aid)}/memory/core`);
+  }
+
+  async addWorkspaceCoreMemory(wid: string, aid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/assistants/${seg(aid)}/memory/core`, body);
+  }
+
+  async updateWorkspaceCoreMemory(
+    wid: string,
+    aid: string,
+    entryId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.wsJson('PATCH', `/${seg(wid)}/assistants/${seg(aid)}/memory/core/${seg(entryId)}`, body);
+  }
+
+  async removeWorkspaceCoreMemory(wid: string, aid: string, entryId: string): Promise<unknown> {
+    return this.wsJson('DELETE', `/${seg(wid)}/assistants/${seg(aid)}/memory/core/${seg(entryId)}`);
+  }
+
+  // Rules (workspace, or one thread when `tid` is given)
+
+  private rulesPath(wid: string, tid?: string): string {
+    return tid ? `/${seg(wid)}/threads/${seg(tid)}/rules` : `/${seg(wid)}/rules`;
+  }
+
+  async getWorkspaceRules(wid: string, tid?: string): Promise<unknown> {
+    return this.ws(this.rulesPath(wid, tid));
+  }
+
+  async setWorkspaceRules(
+    wid: string,
+    tid: string | undefined,
+    body: { content: string; expectedRevision?: number },
+  ): Promise<unknown> {
+    return this.wsJson('PUT', this.rulesPath(wid, tid), body);
+  }
+
+  async getWorkspaceRulesHistory(wid: string, tid?: string, before?: string): Promise<unknown> {
+    return this.ws(`${this.rulesPath(wid, tid)}/history`, {}, { before });
+  }
+
+  // Automations
+
+  async listWorkspaceAutomations(wid: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations`);
+  }
+
+  async createWorkspaceAutomation(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/automations`, body);
+  }
+
+  async previewWorkspaceAutomationSchedule(wid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/automations/schedule-preview`, body);
+  }
+
+  async getWorkspaceAutomation(wid: string, id: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automations/${seg(id)}`);
+  }
+
+  async deleteWorkspaceAutomation(wid: string, id: string): Promise<unknown> {
+    return this.wsJson('DELETE', `/${seg(wid)}/automations/${seg(id)}`);
+  }
+
+  async updateWorkspaceAutomationSettings(wid: string, id: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.wsJson('PATCH', `/${seg(wid)}/automations/${seg(id)}/settings`, body);
+  }
+
+  /** `activate`, `invoke`, `test` or `pause`. */
+  async runWorkspaceAutomationAction(
+    wid: string,
+    id: string,
+    action: string,
+    body: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/automations/${seg(id)}/${seg(action)}`, body);
+  }
+
+  async listWorkspaceAutomationRuns(wid: string, query?: Query): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automation-runs`, {}, query);
+  }
+
+  async getWorkspaceAutomationRun(wid: string, runId: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automation-runs/${seg(runId)}`);
+  }
+
+  async rerunWorkspaceAutomationRun(wid: string, runId: string): Promise<unknown> {
+    return this.wsJson('POST', `/${seg(wid)}/automation-runs/${seg(runId)}/rerun`, {});
+  }
+
+  async getWorkspaceAutomationRunSummary(wid: string, runId: string): Promise<unknown> {
+    return this.ws(`/${seg(wid)}/automation-runs/${seg(runId)}/summary`);
   }
 }
