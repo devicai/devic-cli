@@ -19,13 +19,16 @@ import {
 
 const MESSAGES_PAGE_MAX = 200;
 
+/** `@everybody`: everyone who can read the thread is notified; never asks an assistant. */
+const EVERYBODY = { kind: 'everyone', id: 'everyone', label: 'everybody' };
+
 function threadsTable(d: unknown): string {
   const data = d as any;
   const items = itemsOf(data, 'threads');
   if (!items.length) return '_No threads found._';
   const rows = items.map((t: any) => ({
     id: t.id,
-    workspace: t.workspaceName ?? t.workspaceId,
+    workspace: t.kind === 'direct' ? 'Direct message' : t.workspaceName ?? t.workspaceId,
     title: t.title || '(untitled)',
     unread: t.unreadMentionCount
       ? `${t.unreadCount ?? 0} (@${t.unreadMentionCount})`
@@ -171,16 +174,21 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
     .option('--search <text>', 'Match thread title or workspace name (all words, accent/case-insensitive)')
     .option('--unread', 'Only threads with unread messages')
     .option('--archived', 'Include archived threads')
+    .option('--kind <kind>', 'Only "direct" (private conversations) or "shared" threads')
     .option('--offset <n>', 'Items to skip')
     .option('--limit <n>', 'Items to return (max 100, default 20)')
     .action(
       withAction(async (opts: unknown) => {
         const o = opts as {
           workspace?: string; search?: string; unread?: boolean; archived?: boolean;
-          offset?: string; limit?: string;
+          kind?: string; offset?: string; limit?: string;
         };
+        if (o.kind != null && o.kind !== 'direct' && o.kind !== 'shared') {
+          throw new DevicCliError('--kind must be "direct" or "shared".', 'INVALID_USAGE');
+        }
         const client = createClient();
         const query = {
+          kind: o.kind,
           search: o.search,
           unread: o.unread ? 'true' : undefined,
           includeArchived: o.archived ? 'true' : undefined,
@@ -230,9 +238,9 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
 
   threads
     .command('create <wid>')
-    .description('Start a thread in a workspace')
+    .description('Start a thread in a workspace (private conversations: see "devic ws dm")')
     .option('--title <title>', 'Thread title')
-    .option('--direct', 'Direct (one-to-one) thread')
+    .option('--direct', 'Private conversation with --user (account-wide: same as "devic ws dm open")')
     .option('--user <uid>', 'With --direct: the other person (userUID)')
     .action(
       withAction(async (wid: unknown, opts: unknown) => {
@@ -298,9 +306,10 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
     .option('--assistant <aid>', 'Direct the message to this assistant of the workspace')
     .option(
       '--mention <kind:id[:label]>',
-      'Mention a user or assistant (repeatable), e.g. assistant:abc123:Writer',
+      'Mention a user or assistant (repeatable), e.g. assistant:abc123:Writer; "everyone" = @everybody',
       (value: string, prev: string[] = []) => [...prev, value],
     )
+    .option('--everybody', 'Mention @everybody: notifies everyone who can read the thread (added to the text if missing)')
     .option('--reply-to <messageId>', 'Reply to this message')
     .option('--client-id <id>', 'Idempotency key (clientMessageId): resending it does not post twice')
     .option('--wait', 'Wait for the assistants the message started, then print their replies')
@@ -309,7 +318,7 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
     .action(
       withAction(async (wid: unknown, tid: unknown, text: unknown, opts: unknown) => {
         const o = opts as {
-          assistant?: string; mention?: string[]; replyTo?: string; clientId?: string;
+          assistant?: string; mention?: string[]; everybody?: boolean; replyTo?: string; clientId?: string;
           wait?: boolean; timeout: string; pollInterval: string;
         };
         let body = text as string | undefined;
@@ -317,13 +326,17 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
         if (body == null || !body.trim()) {
           throw new DevicCliError('Message text is required (argument, "-" or piped stdin).', 'INVALID_USAGE');
         }
-        const mentions = (o.mention ?? []).map((m) => {
+        const parsed = (o.mention ?? []).map((m) => {
+          if (m === 'everyone' || m === 'everybody') return EVERYBODY;
           const [kind, id, ...rest] = m.split(':');
           if ((kind !== 'user' && kind !== 'assistant') || !id) {
-            throw new DevicCliError(`--mention "${m}": expected user:<id>[:label] or assistant:<id>[:label].`, 'INVALID_USAGE');
+            throw new DevicCliError(`--mention "${m}": expected user:<id>[:label], assistant:<id>[:label] or everyone.`, 'INVALID_USAGE');
           }
           return { kind, id, label: rest.length ? rest.join(':') : id };
         });
+        const mentions = o.everybody && !parsed.includes(EVERYBODY) ? [...parsed, EVERYBODY] : parsed;
+        // The server only accepts a mention whose @label is in the text.
+        if (mentions.includes(EVERYBODY) && !/(^|[^\p{L}\p{N}_@])@(everybody|everyone)(?![\p{L}\p{N}_])/u.test(body)) body = `${body.trimEnd()} @everybody`;
         const timeout = Number(o.timeout);
         const pollInterval = Number(o.pollInterval);
         if (o.wait && (!(timeout > 0) || !(pollInterval > 0))) {
@@ -479,6 +492,63 @@ export function registerWorkspaceThreadCommands(ws: Command): void {
     );
 
   // ── files ──
+
+  // Private conversations: account-wide, with anyone in the account (not a workspace's).
+  const dm = ws.command('dm').description('Direct messages: private conversations with anyone in your account');
+
+  dm.command('list')
+    .description('Your private conversations, most recent first')
+    .action(
+      withAction(async () => createClient().listDirectMessages(), (d) => {
+        const data = d as any;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        if (!items.length) return '_No private conversations yet. Start one with `devic ws dm open <user>`._';
+        return [
+          md.h(2, 'Direct messages'),
+          '',
+          md.table(items.map((t: any) => ({
+            id: t.id,
+            workspace: t.workspaceId,
+            with: t.title || '-',
+            unread: t.unreadCount || (t.unread || t.manualUnread ? 'Yes' : '-'),
+            updated: t.updatedAt,
+          })), { columns: ['id', 'workspace', 'with', 'unread', 'updated'] }),
+          '',
+          'Read or write with `devic ws threads get <workspace> <id>` and `devic ws send <workspace> <id>`.',
+        ].join('\n');
+      }),
+    );
+
+  const openDm = (who: string) => createClient().openDirectMessage(who.includes('@') ? { email: who } : { userUID: who });
+  const opened = (d: unknown) => {
+    const t = (d as any)?.thread ?? d;
+    return md.success(`Conversation ${md.code(String(t?.id ?? '-'))} in ${md.code(String(t?.workspaceId ?? '-'))}${t?.title ? ` — ${t.title}` : ''}`);
+  };
+
+  dm.command('open <user>')
+    .description('Open (or find) the conversation with a person: userUID or email')
+    .action(withAction(async (user: unknown) => openDm(user as string), opened));
+
+  dm.command('send <user> [text]')
+    .description('Write to a person privately (opens the conversation if needed; text "-" or piped stdin)')
+    .option('--client-id <id>', 'Idempotency key (clientMessageId): resending it does not post twice')
+    .action(
+      withAction(async (user: unknown, text: unknown, opts: unknown) => {
+        const o = opts as { clientId?: string };
+        let body = text as string | undefined;
+        if (body === '-' || (body == null && isStdinPiped())) body = await readTextStdin();
+        if (body == null || !body.trim()) {
+          throw new DevicCliError('Message text is required (argument, "-" or piped stdin).', 'INVALID_USAGE');
+        }
+        const t = (await openDm(user as string)) as any;
+        const thread = t?.thread ?? t;
+        const sent = await createClient().postWorkspaceMessage(thread.workspaceId, thread.id, {
+          text: body,
+          ...(o.clientId && { clientMessageId: o.clientId }),
+        });
+        return { workspaceId: thread.workspaceId, threadId: thread.id, ...(sent as object) };
+      }, (d) => md.success(`Sent to ${md.code(String((d as any)?.threadId))} in ${md.code(String((d as any)?.workspaceId))}.`)),
+    );
 
   const files = ws.command('files').description('Files attached to a thread');
 

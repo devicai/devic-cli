@@ -302,6 +302,7 @@ devic ws catalog
 # Threads (no --workspace = across every workspace you see)
 devic ws threads list --unread --search "factura"
 devic ws threads list --workspace <wid> --archived
+devic ws threads list --kind direct                   # only private conversations (shared: the rest)
 devic ws threads get <wid> <tid>                      # transcript, read state, pending questions
 devic ws threads messages <wid> <tid> --before 120 --limit 50   # or --after <seq>
 devic ws threads create <wid> --title "Q3 close"
@@ -312,6 +313,12 @@ devic ws threads read <wid> <tid> [--through <seq>]   # unread
 # Talk to assistants
 devic ws send <wid> <tid> "Draft the summary" --assistant <aid> --wait
 echo "long text" | devic ws send <wid> <tid> -
+devic ws send <wid> <tid> "Release at 5pm" --everybody   # @everybody: notify everyone in the thread
+
+# Direct messages: private, account-wide (not inside a workspace)
+devic ws dm list
+devic ws dm open ana@acme.com                         # or a userUID; the same conversation if it exists
+devic ws dm send ana@acme.com "Can you check the invoice?"
 devic ws answer <wid> <tid> <invocationId> --answers '[{"id":"q1","selected":["eur"]}]'
 devic ws answer <wid> <tid> <invocationId> --skip
 devic ws approve <wid> <tid> <invocationId> [--always]      # tool call waiting for approval
@@ -355,6 +362,19 @@ status. The result is `{message, outcome, invocations, messages}` with `outcome`
 `{"type":"workspace_invocation",...}` NDJSON lines in JSON mode. `--timeout`
 (seconds, default 300) exits 3; `--poll-interval` (seconds, default 1) backs off
 to 5 s.
+
+**Direct messages** live in one hidden space of the account: `dm list` returns
+`{workspaceId, items}` (`workspaceId` is null before the first conversation) and
+every thread command works on them with that `workspaceId`. Anyone in the account
+can be written to; the account's "API" integration (an API key without `--as`)
+cannot (`DIRECT_MESSAGES_REQUIRE_USER`). `threads create --direct --user` opens the
+same account-wide conversation.
+
+**`--everybody`** (or `--mention everyone`) notifies everyone who can read the
+thread, as a mention; it never asks an assistant. `@everybody` is added to the
+text when missing (the server requires it). Guests from another account can't use
+it (`EVERYONE_MENTION_NOT_ALLOWED`), and an author can use it once every 10
+minutes per thread (`EVERYONE_MENTION_COOLDOWN`, 429; the message is not posted).
 
 **`answer`** reads the thread to find the invocation's `revision` and
 `requestedInput.id`; pass `--revision` and `--input-id` to skip that.

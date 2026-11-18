@@ -1380,6 +1380,16 @@ export class DevicApiClient {
     return this.ws('/threads', {}, query);
   }
 
+  /** Private conversations of the account: `{ workspaceId, items }` (workspaceId null before the first one). */
+  async listDirectMessages(): Promise<unknown> {
+    return this.ws('/direct-messages');
+  }
+
+  /** The conversation with this person (by userUID or email); the same one if it exists. */
+  async openDirectMessage(body: { userUID?: string; email?: string }): Promise<unknown> {
+    return this.wsJson('POST', '/direct-messages', body);
+  }
+
   async listThreadsOfWorkspace(wid: string, query?: Query): Promise<unknown> {
     return this.ws(`/${seg(wid)}/threads`, {}, query);
   }

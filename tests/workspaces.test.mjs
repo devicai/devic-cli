@@ -298,3 +298,38 @@ test('API error body {error, message} surfaces the code', async () => {
   assert.equal(err.code, 'WORKSPACE_NOT_FOUND');
   assert.equal(err.statusCode, 404);
 });
+
+test('dm: list, open by userUID or email, and send opens then posts', async () => {
+  const list = await run(['ws', 'dm', 'list'], { route: () => ({ data: { workspaceId: 'dm', items: [{ id: 't1', workspaceId: 'dm', kind: 'direct', title: 'Ana · Bea' }] } }) });
+  assert.equal(list.code, 0, list.stderr);
+  assert.equal(list.calls[0].url, `${WS}/direct-messages`);
+
+  const byId = await run(['ws', 'dm', 'open', 'u1'], { route: () => ({ data: { id: 't1', workspaceId: 'dm' } }) });
+  assert.equal(byId.calls[0].method, 'POST');
+  assert.deepEqual(byId.calls[0].body, { userUID: 'u1' });
+  const byEmail = await run(['ws', 'dm', 'open', 'bea@example.test'], { route: () => ({ data: { id: 't1', workspaceId: 'dm' } }) });
+  assert.deepEqual(byEmail.calls[0].body, { email: 'bea@example.test' });
+
+  const send = await run(['ws', 'dm', 'send', 'u1', 'hola', '--client-id', 'c1'], {
+    route: (c) => (c.url.endsWith('/direct-messages') ? { data: { id: 't1', workspaceId: 'dm' } } : { data: { message: { id: 'm1' }, invocations: [] } }),
+  });
+  assert.equal(send.code, 0, send.stderr);
+  assert.equal(send.calls[1].url, `${WS}/dm/threads/t1/messages`);
+  assert.deepEqual(send.calls[1].body, { text: 'hola', clientMessageId: 'c1' });
+});
+
+test('send --everybody mentions everyone and puts @everybody in the text', async () => {
+  const r = await run(['ws', 'send', 'w1', 't1', 'Reunión a las 5', '--everybody'], { route: () => ({ data: { message: {}, invocations: [] } }) });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.calls[0].body, { text: 'Reunión a las 5 @everybody', mentions: [{ kind: 'everyone', id: 'everyone', label: 'everybody' }] });
+  const kept = await run(['ws', 'send', 'w1', 't1', '@everyone mirad esto', '--mention', 'everyone'], { route: () => ({ data: { message: {}, invocations: [] } }) });
+  assert.equal(kept.calls[0].body.text, '@everyone mirad esto', 'already in the text: not added again');
+});
+
+test('threads list --kind direct is passed; anything else is refused', async () => {
+  const r = await run(['ws', 'threads', 'list', '--kind', 'direct'], { route: () => ({ data: { items: [] } }) });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.calls[0].url, /kind=direct/);
+  const bad = await run(['ws', 'threads', 'list', '--kind', 'other']);
+  assert.notEqual(bad.code, 0);
+});
